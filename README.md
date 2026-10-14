@@ -4,7 +4,7 @@ A guitar amplifier that runs in a browser tab. A cascaded valve preamp, a tone
 stack taken off the schematic, a push-pull power amp with sag, and a speaker
 cabinet — no plugins, no installer, no assets to download.
 
-Live: *(not published yet)*
+Live: <https://greentheo.github.io/amp/>
 
 ## Why it sounds like an amp
 
