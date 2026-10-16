@@ -34,7 +34,19 @@
  */
 const VOICING = {
   decades: 2.2,
-  scale: 0.9,
+  // 0.9 until it was measured against a reference. At 0.9 the whole of a
+  // JCM800's gain range landed between drive 0 and drive 0.2 — four fifths
+  // of this knob was hotter than a cranked Marshall, and at drive 0 the amp
+  // was still dirtier than that amp at 6. Dropping it 22 dB keeps the same
+  // 44 dB span but puts a cranked JCM800 around drive 0.7, which leaves the
+  // top of the knob for being hotter than one and the bottom genuinely
+  // clean. Measured, that took the error at the clean end from 25.2 dB to
+  // 14.3; at the dirty end nothing changed, because a matching setting
+  // already existed there — it was just crammed into the first fifth.
+  //
+  // `makeup` and `stageGain` were swept again at the new operating point and
+  // left alone: 0.18 dB between the best and the shipped value.
+  scale: 0.07,
   // 'exp' is the shipped exponential curve; 'soft' decouples knee hardness
   // from saturation point. knee only applies to 'soft'.
   curve: 'exp',

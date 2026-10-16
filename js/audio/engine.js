@@ -19,6 +19,14 @@ export class Engine {
     this.tone = { stack: 'jcm800', bass: 0.5, mid: 0.5, treble: 0.6 };
     // Partial overrides onto the worklet's defaults; empty means stock.
     this.voicing = {};
+    // What was last ASKED for, which is not what the AudioParams hold.
+    // set() ramps with setTargetAtTime over 20 ms so the knobs do not click,
+    // so reading .value straight afterwards returns a number on its way to
+    // the target and mostly still the previous setting. An offline render
+    // that reads the live params therefore renders the setting before last
+    // — which in a sweep looks perfectly monotonic and is quietly off by
+    // one step. The render uses these instead.
+    this.requested = {};
   }
 
   /**
@@ -152,17 +160,20 @@ export class Engine {
     const g = this.buildChain(off);
     g.limiter.connect(off.destination);
 
-    // Carry every live setting across. Reading the AudioParams back off the
-    // running node is what keeps this honest — there is no second copy of
-    // the state to fall out of step.
+    // Carry every setting across, preferring what was asked for over what
+    // the live AudioParam currently holds — see `requested`.
     for (const [name, param] of this.amp.parameters) {
       const target = g.amp.parameters.get(name);
-      if (target) target.value = param.value;
+      if (!target) continue;
+      target.value = name in this.requested ? this.requested[name] : param.value;
     }
-    g.master.gain.value = this.master.gain.value;
-    g.verbSend.gain.value = this.verbSend.gain.value;
-    g.cabWet.gain.value = this.cabWet.gain.value;
-    g.cabDry.gain.value = this.cabDry.gain.value;
+    const want = (k, node, dflt) =>
+      (k in this.requested ? this.requested[k] : (node ? node.gain.value : dflt));
+    g.master.gain.value = want('master', this.master);
+    g.verbSend.gain.value = want('reverb', this.verbSend);
+    const mix = 'cabMix' in this.requested ? this.requested.cabMix : this.cabWet.gain.value;
+    g.cabWet.gain.value = mix;
+    g.cabDry.gain.value = 1 - mix;
 
     const { stack, treble, mid, bass } = this.tone;
     g.amp.port.postMessage({ type: 'tone', k: coeffs(stack, treble, mid, bass, rate * 4) });
@@ -238,6 +249,7 @@ export class Engine {
   }
 
   set(name, value) {
+    this.requested[name] = value;
     const p = this.amp.parameters.get(name);
     if (p) p.setTargetAtTime(value, this.ctx.currentTime, 0.02);
     else if (name === 'master') this.master.gain.setTargetAtTime(value, this.ctx.currentTime, 0.03);

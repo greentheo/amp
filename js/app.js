@@ -14,7 +14,9 @@ const engine = new Engine();
  *  hears logarithmically, which is most of it. */
 const KNOBS = {
   preamp: [
-    { k: 'drive',  label: 'Gain',    min: 0, max: 1, def: 0.35 },
+    // 0.35 used to sit past a cranked JCM800; on the recalibrated knob the
+    // same territory is around 0.55.
+    { k: 'drive',  label: 'Gain',    min: 0, max: 1, def: 0.55 },
     { k: 'bass',   label: 'Bass',    min: 0, max: 1, def: 0.5, tone: true },
     { k: 'mid',    label: 'Mid',     min: 0, max: 1, def: 0.5, tone: true },
     { k: 'treble', label: 'Treble',  min: 0, max: 1, def: 0.6, tone: true },
