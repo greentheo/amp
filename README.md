@@ -24,6 +24,12 @@ rendered impulse response — an impulse plus a few cabinet panel reflections
 pushed through filters in an `OfflineAudioContext` — with Axis and Distance
 controls, and you can drop a measured `.wav` IR over the top at any time.
 
+Whether the modelled cab is doing that job is now a measurement rather than
+a belief, and the first answer was no: against a reference cab it was +18 to
++24 dB too bright from 3 kHz up. Fitting its filter parameters to a measured
+target takes that from 11.1 dB rms to 3.5 dB. `calibration/README.md` has
+the method.
+
 ## The tone stack
 
 This is the part you cannot fake with an EQ, and the part not to write from
@@ -71,8 +77,20 @@ audible band. Neither more taps at the same corner nor more oversampling fixes
 it, because the content being folded was never above the oversampled Nyquist
 to begin with.
 
-Cornering at 11 kHz instead costs nothing — the cab is 30 dB down by 8 kHz —
-and takes the worst offender from −57 dB to −134 dB.
+Cornering at 11 kHz instead costs nothing and takes the worst offender from
+−57 dB to −134 dB.
+
+> **Correction, found by measurement.** This paragraph used to justify the
+> 11 kHz corner with "the cab is 30 dB down by 8 kHz". That was not true of
+> the cab actually shipping here. Measured by differencing a cab-on and a
+> cab-off render (`tools/cabcurve.mjs`), the stock V30 is **15 dB** below its
+> own peak at 8 kHz, and its peak sits at **5 kHz** — +12.9 dB relative to
+> 1 kHz. The cab was loudest exactly where this page says fizz lives, which
+> is close to the opposite of the job it is described as doing.
+>
+> The 11 kHz corner is still right; the aliasing numbers above are measured
+> and stand on their own. It was the justification that was wrong, not the
+> decision. See issue #23.
 
 Measured, 7 kHz in at full gain, three stages, relative to the fundamental:
 

@@ -154,6 +154,48 @@ Offline rather than recording the page in realtime, because a converter round
 trip and whatever the OS mixer felt like doing have no business inside a
 measurement whose whole purpose is to be exact.
 
+## Fitting the cab
+
+The cab is the one block that does not need searching, because it is linear
+and it is last in the chain. So `Y_with_cab = cab x Y_without_cab` at every
+frequency, whatever the preamp did upstream — divide one spectrum by the
+other and the amp, its distortion and its settings all cancel, leaving the
+cab's own response.
+
+```bash
+tools/bias.sh --amp "British Lead 800" --set gain=0.6 --out calibration/bias.wav
+tools/bias.sh --amp "British Lead 800" --set gain=0.6 --no-cab --out calibration/bias-nocab.wav
+node tools/cabcurve.mjs calibration/bias.wav calibration/bias-nocab.wav --out calibration/cab-target.json
+```
+
+That prints the curve and writes a 24-point target. The check that it worked
+is in the output: the two sweep sections are at different drive levels, and a
+linear block must answer the same to both. They agree to 0.01–0.17 dB in
+practice. If they do not, something upstream is level dependent and the
+measurement is not a cab response.
+
+Then fit, in the page console:
+
+```js
+await window.amp.fitCab('calibration/cab-target.json', { passes: 14 })
+```
+
+About a second, because scoring a candidate means rendering a 90 ms impulse
+and reading its spectrum — not rendering 78 seconds of stimulus. Thousands of
+evaluations instead of a grid of twenty.
+
+Always confirm the fit against a real render rather than trusting the number
+it reports — render with `cabMix:1` and `cabMix:0` and run `cabcurve.mjs` on
+the pair. Prediction and measurement agree to about 0.2 dB. They did not at
+first: the cab had `Math.random()` noise in its impulse, so every evaluation
+saw a slightly different speaker, and the optimiser chased the noise and
+stopped on a lucky draw — reporting 2.59 dB where a render measured 4.13.
+The noise is seeded now.
+
+**What this is not.** It produces a 24-point curve to fit our own filter
+model against, which is ordinary calibration. Deriving and shipping someone
+else's impulse response would be a different thing and is not what this does.
+
 ## 4. Compare
 
 ```bash

@@ -5,6 +5,7 @@ import { Engine } from './audio/engine.js';
 import { STACKS } from './audio/tonestack.js';
 import { SPEAKERS } from './audio/cab.js';
 import { encodeWav } from './audio/wav.js';
+import { fitCab, responseOf, scoreAgainst } from './audio/cabfit.js';
 
 const $ = (id) => document.getElementById(id);
 const engine = new Engine();
@@ -164,7 +165,8 @@ function snapshot() {
     // the live object to every row of a sweep manifest makes all of them
     // read back as whatever the last one set.
     ...(Object.keys(engine.voicing || {}).length
-      ? { voicing: { ...engine.voicing } } : {}) };
+      ? { voicing: { ...engine.voicing } } : {}),
+    cab: { ...engine.cabOpts } };
 }
 
 /**
@@ -173,10 +175,17 @@ function snapshot() {
  */
 async function applySetting(setting) {
   let cab = false;
+  let cabOverride = null;
   for (const [k, v] of Object.entries(setting)) {
     if (k === 'voicing') {
       engine.resetVoicing();
       engine.setVoicing(v);
+    } else if (k === 'cab') {
+      // Cab shape overrides (see CAB_SHAPE) go to the engine, not to a knob.
+      // Axis, Distance and Cab are knobs; resonance, breakup and the rolloff
+      // are not, because they are the speaker rather than the mic.
+      cabOverride = v;
+      cab = true;
     } else if (k === 'stack' || k === 'stages' || k === 'speaker') {
       setSelect(k, v);
       if (k === 'speaker') cab = true;
@@ -184,6 +193,10 @@ async function applySetting(setting) {
       setKnob(k, v);
       if (KNOB_BY_KEY[k].spec.cab) cab = true;
     }
+  }
+  if (cabOverride) {
+    await engine.setCab(cabOverride);
+    drawCab();
   }
   // push() debounces cab re-rendering by 120 ms, and a render that starts
   // before it lands would use the previous impulse response.
@@ -230,6 +243,24 @@ window.amp = {
     }).catch(() => {});
     $('render-note').textContent = `sweep done — ${done.length} renders`;
     return done;
+  },
+
+  /** Fit the cab to a target curve from tools/cabcurve.mjs. */
+  async fitCab(targetUrl, opts = {}) {
+    const target = await (await fetch(targetUrl)).json();
+    const t0 = performance.now();
+    const r = await fitCab(engine.ctx, target, opts);
+    r.seconds = +((performance.now() - t0) / 1000).toFixed(1);
+    return r;
+  },
+
+  /** The current cab's response, for checking a fit without a full render. */
+  async cabResponse(target) {
+    const ir = await import('./audio/cab.js').then((m) => m.renderCab(engine.ctx, engine.cabOpts));
+    const resp = responseOf(ir, engine.ctx.sampleRate, target.freq);
+    const k = target.freq.indexOf(1000);
+    return { db: resp.map((v) => +(v - resp[k]).toFixed(2)),
+      err: +scoreAgainst(resp, target.freq, target.db).toFixed(3) };
   },
 
   _cached: null,

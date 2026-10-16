@@ -194,6 +194,10 @@ export class Engine {
 
   async setCab(opts) {
     this.cabOpts = { ...(this.cabOpts || { speaker: 'v30', axis: 0.6, distance: 0.25 }), ...opts };
+    // nulls clear an override rather than becoming one
+    for (const k of Object.keys(this.cabOpts)) {
+      if (this.cabOpts[k] == null) delete this.cabOpts[k];
+    }
     this.irData = null;                 // back to the generated cab
     this.cab.buffer = await renderCab(this.ctx, this.cabOpts);
   }
