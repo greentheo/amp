@@ -80,20 +80,68 @@ calibration done at one level is worth very little at the other.
 ## 2. Capture the reference
 
 Play `calibration/stimulus.wav` through whatever you are matching and record
-the result. Two routes:
+the result, without normalising, limiting or EQ'ing the bounce. Level is
+solved for later; the shape is what is being measured.
 
-**BIAS Amp, or any plugin** — keep it in the box. Put the stimulus on a track,
-BIAS on that track, and bounce. No converters, no room, nothing to go wrong.
-If you would rather run BIAS standalone, route the stimulus to it with
-BlackHole and record its output back the same way.
+### BIAS AMP 2 in Ableton (the route to prefer)
 
-**A real amp** — play the stimulus out of an interface output into the amp's
-input (a reamp box if the levels need it), and mic the cab as you normally
-would. Everything the mic and the room do becomes part of the reference,
-which is the point.
+Needs the BIAS AMP 2 **plugin** (AU or VST3), not just the standalone app. If
+only the standalone is installed, re-run the Positive Grid installer and tick
+the plugin formats.
 
-Either way, do not normalise, limit, or EQ the bounce. Level is solved for
-later; the shape is what is being measured.
+Everything stays in the box: no converters, no clock, no room, and the bounce
+is exact.
+
+1. **Preferences -> Audio -> Sample Rate: 48000.** The compare tool handles a
+   mismatch, but there is no reason to add a resample.
+2. New set. Drag `calibration/stimulus.wav` onto an audio track.
+3. **Turn Warp OFF on the clip.** This is the one that silently ruins the
+   measurement. Live auto-warps long imports, and a warped clip is
+   time-stretched — every section lands somewhere other than where the
+   manifest says it does. Select the clip, Clip view, Warp switch off.
+4. Clip Gain at 0 dB, track volume at unity, no other devices on the track.
+5. Drop BIAS AMP 2 on the track. Pick the amp model you want to match and
+   **turn its reverb and noise gate off** — they are not part of what is
+   being compared, and a gate chews the quiet end of the sweep.
+6. Nothing on the master chain. No limiter, no compressor, no EQ.
+7. Select the whole arrangement, then **Export Audio/Video**:
+   * Rendered Track: Master
+   * Sample Rate 48000, Encode PCM, File Type WAV, Bit Depth 24
+   * **Normalize: Off**, Dither: None
+8. Save it into `calibration/` as something you will recognise, e.g.
+   `bias-jcm800.wav`.
+
+### Standalone BIAS AMP 2, with a loopback
+
+Only if the plugin is not an option. Needs two virtual devices, because one
+carries the stimulus in and the other carries BIAS's output back out:
+
+```bash
+brew install --cask blackhole-2ch blackhole-16ch
+```
+
+Then set BIAS AMP 2's input to BlackHole 2ch and its output to BlackHole
+16ch, play the stimulus out of BlackHole 2ch, and record BlackHole 16ch in
+Ableton. It works, but there are more places for a sample rate or a clock to
+go quietly wrong, which is why the plugin route is the one to prefer.
+
+### A real amp
+
+Play the stimulus out of an interface output into the amp's input — a reamp
+box if the levels need it — and mic the cab as you normally would. Everything
+the mic and the room do becomes part of the reference, which is the point.
+
+### Set this amp to match
+
+The comparison is only fair if both sides are doing the same job, so before
+rendering:
+
+* **Reverb to 0.** BIAS's reverb is off, so this one has to be too.
+* **Gate low**, for the same reason it is off in BIAS: it eats the quiet
+  end of the sweep and the tail of the decay.
+* Pick the tone stack from the same family as the BIAS model — matching a
+  JCM800 against the Twin stack measures the difference between two
+  different amps, which is true but not useful.
 
 ## 3. Render ours
 

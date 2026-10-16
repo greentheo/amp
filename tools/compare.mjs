@@ -38,7 +38,26 @@ function load(path, stim, stimRate) {
   const m = manifest.sections.find((sec) => sec.name === 'marker');
   const { shift, score } = alignByEnvelope(stim, stimRate, x, wav.rate, 10,
     m ? { start: m.start, seconds: m.seconds } : null);
-  return { path, x, rate: wav.rate, offset: shift, score, frames: wav.frames };
+
+  // Align a second time on something near the end. If the capture runs at
+  // the right speed those two offsets agree; if it has been time-stretched
+  // they do not, and they drift apart in proportion to the error.
+  //
+  // This is worth the second pass because of one specific and very easy
+  // mistake: Ableton auto-warps long imports, and a warped clip is
+  // time-stretched. Every section then lands somewhere other than where the
+  // manifest says, and the report comes out detailed, confident and
+  // meaningless. Catching it costs a correlation; not catching it costs an
+  // afternoon.
+  let drift = null;
+  const late = [...manifest.sections].reverse()
+    .find((sec) => sec.name === 'decay' || sec.name.startsWith('di-') || sec.name === 'musical-synth');
+  if (late) {
+    const l = alignByEnvelope(stim, stimRate, x, wav.rate, 10,
+      { start: late.start, seconds: Math.min(late.seconds, 4) });
+    if (l.score > 0.2) drift = { secs: l.shift - shift, over: late.start - (m ? m.start : 0) };
+  }
+  return { path, x, rate: wav.rate, offset: shift, score, frames: wav.frames, drift };
 }
 
 const section = (name) => manifest.sections.find((s) => s.name === name);
@@ -72,6 +91,15 @@ for (const c of [ours, ref]) {
 if (ours.score < 0.3 || ref.score < 0.3) {
   console.log('\n  A low correlation means the stimulus was not found. Usually the capture');
   console.log('  is of something else, is heavily gated, or is missing its first seconds.');
+}
+for (const c of [ours, ref]) {
+  if (!c.drift || Math.abs(c.drift.secs) < 0.05) continue;
+  const pct = (c.drift.secs / c.drift.over) * 100;
+  console.log(`\n  !! ${c.path.split('/').pop()} does not run at the right speed.`);
+  console.log(`     Start and end disagree by ${(c.drift.secs * 1000).toFixed(0)} ms over ` +
+    `${c.drift.over.toFixed(0)} s, about ${pct.toFixed(2)}%.`);
+  console.log('     Almost always a warped clip — in Ableton, turn Warp off on the');
+  console.log('     imported stimulus and bounce again. Everything below is unreliable.');
 }
 
 /* ---- 1 and 2: spectral balance, at two drive levels ---- */
