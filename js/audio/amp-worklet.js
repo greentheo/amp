@@ -42,6 +42,24 @@ const VOICING = {
   stageGain: 1.6,
   stageGainDrive: 0.08,
   makeup: 3.2,
+
+  // The power amp. Its drive is separate from the preamp's on purpose: on a
+  // real amp the master volume sits BETWEEN the two and decides how hard the
+  // power stage is pushed, which is most of the difference between a cranked
+  // small amp and a quiet big one. Here masterVol is applied at the output
+  // instead, so until this existed there was no way to drive the power stage
+  // at all — it got whatever the preamp handed it, and turning the preamp
+  // down turned the power amp down with it.
+  paDrive: 1.0,
+  paKp: 1.0,          // push-pull halves; equal is a perfectly odd function
+  paKn: 1.0,          // unequal models a class-AB imbalance
+  sagDepth: 0.55,
+  xfmrHp: 28,         // output transformer losing the bottom
+  xfmrLp: 7500,       // and the top
+  presenceHz: 2000,
+  presenceAmt: 2.2,
+  out: 0.42,
+
   stages: [
     [14, 12000, 1.0, 0.7],
     [30, 10000, 1.1, 0.6],
@@ -215,10 +233,8 @@ class AmpProcessor extends AudioWorkletProcessor {
     this.tsState = [0, 0, 0];
 
     this.ampHp = 0; this.ampLp = 0;
-    this.aAmpHp = poleAt(28, hi);     // output transformer losing the bottom
-    this.aAmpLp = poleAt(7500, hi);   // and the top
     this.presLp = 0;
-    this.aPres = poleAt(2000, hi);
+    this.tuneOutput();
     this.sagEnv = 0;
     this.aSagUp = poleAt(14, hi);
     this.aSagDn = poleAt(2.5, hi);
@@ -237,6 +253,14 @@ class AmpProcessor extends AudioWorkletProcessor {
     };
   }
 
+  /** Corners that depend on the voicing, recomputed when it changes. */
+  tuneOutput() {
+    const V = this.voicing, hi = this.hi;
+    this.aAmpHp = poleAt(V.xfmrHp, hi);
+    this.aAmpLp = poleAt(V.xfmrLp, hi);
+    this.aPres = poleAt(V.presenceHz, hi);
+  }
+
   buildStages() {
     this.stages = this.voicing.stages.map(
       ([hp, lp, kp, kn]) => new Stage(this.hi, hp, lp, kp, kn,
@@ -249,6 +273,7 @@ class AmpProcessor extends AudioWorkletProcessor {
     if (!v) {
       this.voicing = { ...VOICING, stages: VOICING.stages.map((r) => r.slice()) };
       this.buildStages();
+      this.tuneOutput();
       return;
     }
     const next = { ...this.voicing, ...v };
@@ -258,6 +283,7 @@ class AmpProcessor extends AudioWorkletProcessor {
     }
     this.voicing = next;
     this.buildStages();
+    this.tuneOutput();
   }
 
   upsample(x, out) {
@@ -334,11 +360,12 @@ class AmpProcessor extends AudioWorkletProcessor {
 
         // Power amp. Push-pull cancels the even harmonics the preamp made,
         // so what comes out the other side is a different flavour of dirt.
+        y *= V.paDrive;
         const e = Math.abs(y);
         this.sagEnv += (e - this.sagEnv) * (e > this.sagEnv ? this.aSagUp : this.aSagDn);
-        const head = 1 - sagAmt * 0.55 * Math.min(1, this.sagEnv);
+        const head = 1 - sagAmt * V.sagDepth * Math.min(1, this.sagEnv);
         const z = y / Math.max(0.2, head);
-        y = (tube(z, 1.0, 1.0) - tube(-z, 1.0, 1.0)) * 0.5 * head;
+        y = (tube(z, V.paKp, V.paKn) - tube(-z, V.paKp, V.paKn)) * 0.5 * head;
 
         this.ampHp += (y - this.ampHp) * this.aAmpHp;
         y -= this.ampHp;
@@ -348,12 +375,12 @@ class AmpProcessor extends AudioWorkletProcessor {
         // Presence is negative feedback the amp does not apply up top, so it
         // reads as a lift rather than a cut.
         this.presLp += (y - this.presLp) * this.aPres;
-        y += (y - this.presLp) * presence * 2.2;
+        y += (y - this.presLp) * presence * V.presenceAmt;
 
         buf[p] = y;
       }
 
-      let o = this.downsample(buf) * master * 0.42;
+      let o = this.downsample(buf) * master * V.out;
       if (!Number.isFinite(o)) { o = 0; this.reset(); }
       o = Math.max(-1.2, Math.min(1.2, o));
       dst[i] = o;

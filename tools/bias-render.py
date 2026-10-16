@@ -103,6 +103,40 @@ def load_amp(plug, directory):
     return meta['displayName']
 
 
+def set_blocks(plug, disable=(), enable=()):
+    """Turn signal-path blocks on or off by id.
+
+    Mostly for taking the cab out. A harmonic series measured at the output
+    of a cab is not a measurement of the preamp: the harmonics of a low E
+    land between 165 and 500 Hz, which is exactly where two different cabs
+    disagree by 10 dB or more, so the cab's response is folded into every
+    harmonic ratio. To fit the preamp you have to take both cabs out.
+    """
+    pl, st, tail = read_state(plug)
+    blocks = st['project']['amp2']['sigPath']['blocks']['items']
+    seen, changed = [], []
+    for b in blocks:
+        bid = b.get('id')
+        seen.append(bid)
+        if bid in disable and b.get('isActive'):
+            b['isActive'] = False
+            changed.append(f'-{bid}')
+        elif bid in enable and not b.get('isActive'):
+            b['isActive'] = True
+            changed.append(f'+{bid}')
+    missing = [b for b in list(disable) + list(enable) if b not in seen]
+    if missing:
+        sys.exit(f'no such block(s): {", ".join(missing)}\nhave: {", ".join(seen)}')
+    pl['jucePluginState'] = json.dumps(st).encode() + tail
+    plug.raw_state = plistlib.dumps(pl, fmt=plistlib.FMT_BINARY)
+    return changed
+
+
+def list_blocks(plug):
+    return [(b.get('id'), b.get('isActive'))
+            for b in read_state(plug)[1]['project']['amp2']['sigPath']['blocks']['items']]
+
+
 def current_amp(plug):
     try:
         return read_state(plug)[1]['project']['ampName']
@@ -148,6 +182,10 @@ def main():
     ap.add_argument('--list', action='store_true', help='print parameters and exit')
     ap.add_argument('--list-amps', action='store_true', help='print the factory amp models and exit')
     ap.add_argument('--amp', help='factory amp model to load, by display name')
+    ap.add_argument('--no-cab', action='store_true',
+                    help='bypass the cab block, to measure the amp without it')
+    ap.add_argument('--disable', action='append', default=[], metavar='BLOCK')
+    ap.add_argument('--enable', action='append', default=[], metavar='BLOCK')
     ap.add_argument('--set', action='append', default=[], metavar='NAME=VALUE')
     ap.add_argument('--sweep', action='append', default=[], metavar='NAME=V1,V2,...',
                     help='render one file per combination')
@@ -181,6 +219,11 @@ def main():
                       ' Run --list-amps to see them.'))
         print(f'amp: {load_amp(plug, amps[args.amp][1])}')
 
+    disable = list(args.disable) + (['bias.cab2'] if args.no_cab else [])
+    if disable or args.enable:
+        changed = set_blocks(plug, disable, args.enable)
+        print('blocks: ' + (' '.join(changed) if changed else 'already as asked'))
+
     if args.load_state:
         with open(args.load_state, 'rb') as f:
             plug.raw_state = f.read()
@@ -189,6 +232,9 @@ def main():
     if args.list:
         print(f'{plug.name} — {plug.manufacturer_name} {plug.version}')
         print(f'  amp model: {current_amp(plug)}')
+        print('  blocks:')
+        for bid, active in list_blocks(plug):
+            print(f'    {"on " if active else "off"}  {bid}')
         for k in plug.parameters:
             print(f'  {k:12s} = {getattr(plug, k):.4f}')
         if args.save_state:
@@ -228,7 +274,8 @@ def main():
         else:
             tag = '-'.join(f'{k}{v:g}'.replace('.', '') for k, v in sorted(params.items())) or 'default'
             amp = (args.amp or current_amp(plug)).replace(' ', '').replace("'", '')
-            out = os.path.join(args.out_dir, f'bias-{amp}-{tag}.wav')
+            suffix = '-nocab' if args.no_cab else ''
+            out = os.path.join(args.out_dir, f'bias-{amp}{suffix}-{tag}.wav')
         y = render(plug, x, rate, params, args.preroll)
         os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
         with AudioFile(out, 'w', rate, y.shape[0], bit_depth=24) as f:

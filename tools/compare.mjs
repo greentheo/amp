@@ -78,6 +78,9 @@ const ours = load(args[0], stim, stimWav.rate);
 const ref = load(args[1], stim, stimWav.rate);
 
 const JSON_OUT = flags.has('--json');
+// Harmonics quieter than this, relative to their fundamental, count as
+// absent rather than as a number to chase. See the clamp in section 4.
+const HFLOOR = -60;
 const metrics = { ours: args[0], reference: args[1] };
 // --json turns the report into something a tuning loop can rank on. The
 // printed version stays exactly as it was: a score is for searching, and a
@@ -159,6 +162,7 @@ if (quiet && loud) {
 /* ---- 4: harmonic series ---- */
 
 say(`\n4. harmonic series   (dB relative to the fundamental; ours / reference / diff)`);
+say(`   differences are clamped at ${HFLOOR} dB — below that a harmonic is absent, not quiet`);
 let hErr = [], hN = 0;
 for (const hz of manifest.toneHz) {
   say(`   ${hz} Hz`);
@@ -173,11 +177,22 @@ for (const hz of manifest.toneHz) {
     for (let i = 0; i < ha.harmonics.length; i++) {
       const u = ha.harmonics[i], r = hb.harmonics[i];
       if (u == null || r == null) continue;
-      // Below this both are measuring the noise floor and the difference is
-      // meaningless; reporting it would send you chasing nothing.
-      const real = u > -70 || r > -70;
-      if (real) { hErr.push(u - r); hN++; }
-      cells.push(`H${i + 2} ${pad(sign(u), 6)}/${pad(sign(r), 6)}${real ? pad(sign(u - r), 7) : '      ·'}`);
+      // Clamp both to an audibility floor before differencing.
+      //
+      // Without this the error is dominated by harmonics that are not there.
+      // A measured pair of -55 dB and -108 dB relative to the fundamental
+      // reads as a 53 dB error, and across 80 entries a handful of those
+      // swamp everything real — the amp with the quieter noise floor loses.
+      // -108 dB is not a harmonic, it is the absence of one, and the honest
+      // difference between "very quiet" and "absent" is small.
+      //
+      // -60 dB is the floor because that is roughly where a single harmonic
+      // stops contributing to a guitar sound sitting under everything else
+      // the amp is doing.
+      const uc = Math.max(u, HFLOOR), rc = Math.max(r, HFLOOR);
+      const real = u > HFLOOR || r > HFLOOR;
+      if (real) { hErr.push(uc - rc); hN++; }
+      cells.push(`H${i + 2} ${pad(sign(u), 6)}/${pad(sign(r), 6)}${real ? pad(sign(uc - rc), 7) : '      ·'}`);
     }
     say(`     ${pad(`${dbfs} dBFS`, 9)}  ${cells.slice(0, 4).join('  ')}`);
   }
