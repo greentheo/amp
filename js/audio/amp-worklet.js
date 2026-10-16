@@ -13,6 +13,43 @@
 // latencyHint of 'interactive' without glitching, which is a much tighter
 // budget than an ambient pad has.
 
+/**
+ * The preamp's voicing: the numbers that decide how hard each stage is
+ * driven and how each valve clips.
+ *
+ * These were constants in the code until there was a way to measure them.
+ * They are data now because calibrating against a reference means fitting
+ * them, and you cannot fit a literal buried three levels into a loop. The
+ * defaults below are what the amp shipped with.
+ *
+ *   drive -> gain:  10^(drive * decades) * scale    into stage 1
+ *   later stages:   stageGain + g * stageGainDrive
+ *   makeup:         applied after the tone stack, which sits mid-preamp
+ *   stages[]:       [coupling-cap Hz, Miller Hz, kp, kn] per stage
+ *
+ * kp and kn are the two halves of the valve curve — grid conduction one
+ * side, cutoff the other. Their *difference* is where even harmonics come
+ * from, and their size sets how early it saturates: tube() tends to 1/kp
+ * going up and -1/kn going down.
+ */
+const VOICING = {
+  decades: 2.2,
+  scale: 0.9,
+  // 'exp' is the shipped exponential curve; 'soft' decouples knee hardness
+  // from saturation point. knee only applies to 'soft'.
+  curve: 'exp',
+  knee: 2.0,
+  stageGain: 1.6,
+  stageGainDrive: 0.08,
+  makeup: 3.2,
+  stages: [
+    [14, 12000, 1.0, 0.7],
+    [30, 10000, 1.1, 0.6],
+    [60, 9000, 1.2, 0.55],
+    [90, 8000, 1.3, 0.5],
+  ],
+};
+
 const OS = 4;            // oversampling factor
 // Where the up/down filters turn over, in Hz at the base rate.
 //
@@ -59,6 +96,43 @@ function tube(x, kp, kn) {
   return x >= 0 ? (1 - Math.exp(-kp * x)) / kp : -(1 - Math.exp(kn * x)) / kn;
 }
 
+/**
+ * The same asymmetry, but with the knee's hardness separated from where it
+ * saturates.
+ *
+ *   f(x) = x / (1 + |k x|^h)^(1/h)
+ *
+ * Measured against BIAS, `tube` above could not be made to fit, and the
+ * reason turned out to be its shape rather than its numbers: an exponential
+ * is curved everywhere, so the same kp that keeps it linear enough at -30
+ * dBFS also makes it too soft to generate the 3rd harmonic a real preamp
+ * makes at -6. Sweeping kp and kn across fifteen combinations moved the
+ * harmonic error by 0.35 dB out of 12 — the parameters were already as good
+ * as that family gets.
+ *
+ * This form has what that one lacks: for small x it is linear to within
+ * |kx|^h, so it is genuinely clean when it is quiet, and h sets how abruptly
+ * it turns over without moving the threshold. h=1 is hyperbolic and soft,
+ * h=8 is nearly a hard clip at 1/k.
+ *
+ * IT DID NOT HELP, and that is why it is not the default. Swept across knee
+ * hardness, saturation and asymmetry it reached 11.39 dB against BIAS where
+ * the exponential reached 11.65 — a quarter of a dB — and the search wanted
+ * the softest knee offered, which is the exponential's own behaviour. So the
+ * residual is not the preamp's curve shape.
+ *
+ * It is kept, off by default, because the next person to look at that 11 dB
+ * will have this idea too and should not have to spend an afternoon finding
+ * out. The remaining suspect is the power amp: it is the one nonlinearity in
+ * the chain that is still hardcoded, still symmetric, and still exponential,
+ * and the harmonic measurement cannot tell its products from the preamp's.
+ */
+function softTube(x, kp, kn, h) {
+  const k = x >= 0 ? kp : kn;
+  const a = Math.abs(k * x);
+  return x / Math.pow(1 + Math.pow(a, h), 1 / h);
+}
+
 /** One-pole smoothing coefficient for a corner frequency. */
 function poleAt(hz, rate) {
   return 1 - Math.exp((-2 * Math.PI * hz) / rate);
@@ -70,17 +144,21 @@ class Stage {
    *   This is "tightness": raise it and the amp stops flubbing under gain.
    * @param {number} lpHz Miller capacitance rolling the top off each stage.
    */
-  constructor(rate, hpHz, lpHz, kp, kn) {
+  constructor(rate, hpHz, lpHz, kp, kn, curve = 'exp', knee = 2.0) {
     this.aHp = poleAt(hpHz, rate);
     this.aLp = poleAt(lpHz, rate);
     this.aDc = poleAt(8, rate);
     this.hp = 0; this.lp = 0; this.dc = 0;
     this.kp = kp; this.kn = kn;
+    this.soft = curve === 'soft';
+    this.knee = knee;
   }
 
   run(x, gain, bias) {
     this.hp += (x - this.hp) * this.aHp;
-    let y = tube((x - this.hp) * gain + bias, this.kp, this.kn);
+    const u = (x - this.hp) * gain + bias;
+    let y = this.soft ? softTube(u, this.kp, this.kn, this.knee)
+      : tube(u, this.kp, this.kn);
     this.lp += (y - this.lp) * this.aLp;
     y = this.lp;
     // Asymmetric clipping shifts the average, and that offset would be
@@ -126,12 +204,9 @@ class AmpProcessor extends AudioWorkletProcessor {
 
     // Progressively darker and tighter as the signal goes down the chain,
     // which is what keeps a high-gain sound from turning to mush.
-    this.stages = [
-      new Stage(hi, 14, 12000, 1.0, 0.7),
-      new Stage(hi, 30, 10000, 1.1, 0.6),
-      new Stage(hi, 60, 9000,  1.2, 0.55),
-      new Stage(hi, 90, 8000,  1.3, 0.5),
-    ];
+    this.hi = hi;
+    this.voicing = { ...VOICING, stages: VOICING.stages.map((s) => s.slice()) };
+    this.buildStages();
 
     // Tone stack: coefficients come from the main thread, because getting
     // them right is circuit analysis and belongs in one testable place.
@@ -157,8 +232,32 @@ class AmpProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e) => {
       const d = e.data;
       if (d.type === 'tone') this.ts = d.k;
+      else if (d.type === 'voicing') this.setVoicing(d.v);
       else if (d.type === 'stop') this.alive = false;
     };
+  }
+
+  buildStages() {
+    this.stages = this.voicing.stages.map(
+      ([hp, lp, kp, kn]) => new Stage(this.hi, hp, lp, kp, kn,
+        this.voicing.curve, this.voicing.knee));
+  }
+
+  /** Merge a partial voicing and rebuild, or reset to stock with null.
+   *  Partial so a fit can move one number without restating the rest. */
+  setVoicing(v) {
+    if (!v) {
+      this.voicing = { ...VOICING, stages: VOICING.stages.map((r) => r.slice()) };
+      this.buildStages();
+      return;
+    }
+    const next = { ...this.voicing, ...v };
+    if (v.stages) {
+      next.stages = this.voicing.stages.map((row, i) =>
+        (v.stages[i] ? row.map((x, j) => (v.stages[i][j] == null ? x : v.stages[i][j])) : row.slice()));
+    }
+    this.voicing = next;
+    this.buildStages();
   }
 
   upsample(x, out) {
@@ -200,7 +299,8 @@ class AmpProcessor extends AudioWorkletProcessor {
 
     // Three decades of gain across the knob, which is roughly what the span
     // from "clean" to "all the way up" actually is.
-    const g = Math.pow(10, drive * 2.2) * 0.9;
+    const V = this.voicing;
+    const g = Math.pow(10, drive * V.decades) * V.scale;
     const buf = new Float32Array(OS);
     let peak = 0;
 
@@ -224,11 +324,12 @@ class AmpProcessor extends AudioWorkletProcessor {
         let y = buf[p];
 
         for (let s = 0; s < nStages; s++) {
-          y = this.stages[s].run(y, s === 0 ? g : 1.6 + g * 0.08, bias * (s + 1) * 0.3);
+          y = this.stages[s].run(y, s === 0 ? g : V.stageGain + g * V.stageGainDrive,
+            bias * (s + 1) * 0.3);
           // The tone stack sits between the preamp stages, not after them —
           // which is why on a real amp the tone controls change how the amp
           // distorts and not just how it sounds afterwards.
-          if (s === 1 && this.ts) y = this.tsStep(y) * 3.2;
+          if (s === 1 && this.ts) y = this.tsStep(y) * V.makeup;
         }
 
         // Power amp. Push-pull cancels the even harmonics the preamp made,

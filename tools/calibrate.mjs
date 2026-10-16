@@ -23,7 +23,29 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, globSync } from 'node:fs';
 
-const [reference, pattern] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+// Which number to sort on. The default weighs everything; --rank harmonics
+// fits the preamp alone, which is the right objective when the cab is a
+// separate and much larger error that would otherwise drown it out.
+let rank = 'score';
+const ri = argv.indexOf('--rank');
+if (ri >= 0) { rank = argv[ri + 1]; argv.splice(ri, 2); }
+const RANKERS = {
+  score: (m) => m.score,
+  harmonics: (m) => (m.harmonics ? m.harmonics.rms : Infinity),
+  // |mean| alone says whether we distort more or less overall, ignoring
+  // whether the shape of the series is right.
+  depth: (m) => (m.harmonics ? Math.abs(m.harmonics.mean) : Infinity),
+  quiet: (m) => m['sweep-quiet'].rms,
+  loud: (m) => m['sweep-loud'].rms,
+};
+if (!RANKERS[rank]) {
+  console.error(`--rank must be one of: ${Object.keys(RANKERS).join(', ')}`);
+  process.exit(2);
+}
+const keyOf = RANKERS[rank];
+
+const [reference, pattern] = argv;
 if (!reference || !pattern) {
   console.error("usage: node tools/calibrate.mjs <reference.wav> '<candidates-glob>'");
   console.error("   e.g. node tools/calibrate.mjs calibration/bias-jcm800.wav 'calibration/sweep-*.wav'");
@@ -59,7 +81,8 @@ const score = (file) => {
 };
 
 console.log(`\nreference   ${reference}`);
-console.log(`candidates  ${files.length}\n`);
+console.log(`candidates  ${files.length}`);
+console.log(`ranking by  ${rank}\n`);
 
 const rows = [];
 for (const f of files) {
@@ -82,20 +105,21 @@ if (!ok.length) {
   console.log('\nnothing usable — every candidate failed alignment or drift checks.');
   process.exit(1);
 }
-ok.sort((a, b) => a.m.score - b.m.score);
+ok.sort((a, b) => keyOf(a.m) - keyOf(b.m));
 
-console.log(`\nbest ${Math.min(5, ok.length)}`);
+console.log(`\nbest ${Math.min(5, ok.length)} by ${rank}`);
 for (const r of ok.slice(0, 5)) {
   const s = index[r.file.replace(/^.*\//, '')];
-  console.log(`  ${r.m.score.toFixed(3)}  ${r.file.replace(/^.*\//, '')}` +
+  console.log(`  ${keyOf(r.m).toFixed(3)}  ${r.file.replace(/^.*\//, '')}` +
     (s ? `\n          ${Object.entries(s)
       .filter(([k]) => !['axis', 'distance', 'cabMix', 'speaker', 'master'].includes(k))
-      .map(([k, v]) => `${k}=${v}`).join(' ')}` : ''));
+      .map(([k, v]) => `${k}=${typeof v === 'object' && v ? JSON.stringify(v) : v}`)
+      .join(' ')}` : ''));
 }
 
 // How sharp is the minimum? A wide flat valley means the knob barely
 // matters and the difference is somewhere this sweep did not look.
-const best = ok[0].m.score, worstOk = ok[ok.length - 1].m.score;
+const best = keyOf(ok[0].m), worstOk = keyOf(ok[ok.length - 1].m);
 console.log(`\nspread across the sweep: ${best.toFixed(2)} to ${worstOk.toFixed(2)}`);
 if (worstOk - best < 0.5) {
   console.log('  Nearly flat — these knobs are not what is different. Look elsewhere.');

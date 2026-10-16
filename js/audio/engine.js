@@ -17,6 +17,8 @@ export class Engine {
     this.stream = null;
     this.onMeter = null;
     this.tone = { stack: 'jcm800', bass: 0.5, mid: 0.5, treble: 0.6 };
+    // Partial overrides onto the worklet's defaults; empty means stock.
+    this.voicing = {};
   }
 
   /**
@@ -164,6 +166,10 @@ export class Engine {
 
     const { stack, treble, mid, bass } = this.tone;
     g.amp.port.postMessage({ type: 'tone', k: coeffs(stack, treble, mid, bass, rate * 4) });
+    // The voicing has to travel too, or a fit would render the stock amp.
+    if (Object.keys(this.voicing).length) {
+      g.amp.port.postMessage({ type: 'voicing', v: { ...this.voicing } });
+    }
 
     // The cab has to be built for THIS context, not copied from the live one.
     //
@@ -202,6 +208,20 @@ export class Engine {
     this.irData = data;
     this.cab.buffer = buf;
     return buf.duration;
+  }
+
+  /** Override part of the preamp's voicing. See VOICING in amp-worklet.js. */
+  setVoicing(v) {
+    Object.assign(this.voicing, v);
+    this.amp.port.postMessage({ type: 'voicing', v: this.voicing });
+  }
+
+  /** Back to the shipped voicing. A sweep resets before each setting, so
+   *  every entry means "stock except these" and is reproducible on its own
+   *  rather than inheriting whatever the previous one happened to set. */
+  resetVoicing() {
+    this.voicing = {};
+    this.amp.port.postMessage({ type: 'voicing', v: null });
   }
 
   setTone(t) {

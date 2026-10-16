@@ -159,7 +159,12 @@ function setSelect(id, v) {
 /** Everything that defines the sound right now, as a plain object. */
 function snapshot() {
   return { ...values, stack: $('stack').value, stages: +$('stages').value,
-    speaker: $('speaker').value };
+    speaker: $('speaker').value,
+    // A COPY. engine.voicing is mutated in place by setVoicing, so handing
+    // the live object to every row of a sweep manifest makes all of them
+    // read back as whatever the last one set.
+    ...(Object.keys(engine.voicing || {}).length
+      ? { voicing: { ...engine.voicing } } : {}) };
 }
 
 /**
@@ -169,7 +174,10 @@ function snapshot() {
 async function applySetting(setting) {
   let cab = false;
   for (const [k, v] of Object.entries(setting)) {
-    if (k === 'stack' || k === 'stages' || k === 'speaker') {
+    if (k === 'voicing') {
+      engine.resetVoicing();
+      engine.setVoicing(v);
+    } else if (k === 'stack' || k === 'stages' || k === 'speaker') {
       setSelect(k, v);
       if (k === 'speaker') cab = true;
     } else {
