@@ -91,6 +91,23 @@
 
   <section class="row">
     <div class="plate wide">
+      <div class="badge">CALIBRATION</div>
+      <div class="stack">
+        <p class="note">Render the reference stimulus through the amp exactly as it
+          is set right now, then compare it against a capture of a real amp or
+          BIAS with <code>tools/compare.mjs</code>.</p>
+        <div class="cabrow">
+          <button class="mini" id="btn-render">Render the stimulus</button>
+          <button class="mini" id="btn-stim-file">Use another file&hellip;</button>
+          <input type="file" id="stim-file" accept=".wav,audio/wav" hidden>
+          <span class="note" id="render-note">calibration/stimulus.wav</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="plate wide">
       <div class="badge">RESPONSE</div>
       <canvas id="scope" height="130"></canvas>
       <p class="note" id="scope-note">Output spectrum. Watch the cab eat the fizz above 5 kHz.</p>

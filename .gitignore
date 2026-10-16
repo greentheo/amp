@@ -3,3 +3,8 @@ node_modules/
 *.dmg
 *.pkg
 ref/
+
+# Calibration audio: generated or captured, large, and personal.
+calibration/*.wav
+calibration/stimulus.json
+calibration/di/

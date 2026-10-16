@@ -4,6 +4,7 @@
 import { Engine } from './audio/engine.js';
 import { STACKS } from './audio/tonestack.js';
 import { SPEAKERS } from './audio/cab.js';
+import { encodeWav } from './audio/wav.js';
 
 const $ = (id) => document.getElementById(id);
 const engine = new Engine();
@@ -316,6 +317,74 @@ function wireRecorder() {
   });
 }
 
+/** Render the stimulus through the amp and hand back a WAV. */
+function wireCalibration() {
+  let stimulus = null;                 // an ArrayBuffer, once chosen
+
+  const run = async (source, label) => {
+    if (!engine.ctx) { $('render-note').textContent = 'power the amp on first'; return; }
+    const btn = $('btn-render');
+    btn.disabled = true;
+    $('render-note').textContent = `rendering ${label}\u2026`;
+    try {
+      const t0 = performance.now();
+      const out = await engine.renderStimulus(source);
+      const blob = new Blob([encodeWav(out)], { type: 'audio/wav' });
+      const name = `amp-${$('stack').value}-${stamp()}.wav`;
+      const secs = out.length / out.sampleRate;
+      const took = `${secs.toFixed(1)} s in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+
+      // The dev server takes a PUT and drops the file straight into
+      // calibration/, next to whatever it is about to be compared against.
+      // The published site is static, so that fails there and the file comes
+      // down the ordinary way instead.
+      let saved = null;
+      try {
+        const res = await fetch(`calibration/${name}`, { method: 'PUT', body: blob });
+        if (res.ok) saved = await res.text();
+      } catch { /* static host; fall through to a download */ }
+
+      if (saved) {
+        $('render-note').textContent = `saved ${saved} \u2014 ${took}`;
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        $('render-note').textContent = `${name} \u2014 ${took}`;
+      }
+    } catch (err) {
+      $('render-note').textContent = `render failed: ${err.message}`;
+      console.error(err);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $('btn-render').addEventListener('click', async () => {
+    if (stimulus) return run(stimulus, 'the loaded file');
+    try {
+      const res = await fetch('calibration/stimulus.wav');
+      if (!res.ok) throw new Error(`${res.status} \u2014 run tools/stimulus.mjs first`);
+      stimulus = await res.arrayBuffer();
+    } catch (err) {
+      $('render-note').textContent = `no stimulus: ${err.message}`;
+      return;
+    }
+    return run(stimulus, 'calibration/stimulus.wav');
+  });
+
+  $('btn-stim-file').addEventListener('click', () => $('stim-file').click());
+  $('stim-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    stimulus = await f.arrayBuffer();
+    $('render-note').textContent = f.name;
+    e.target.value = '';
+  });
+}
+
 function stamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -342,6 +411,7 @@ wireSelects();
 wireDI();
 wireInput();
 wireRecorder();
+wireCalibration();
 $('btn-begin').addEventListener('click', begin, { once: true });
 $('btn-panic').addEventListener('click', () => {
   if (!engine.ctx) return;
