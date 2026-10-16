@@ -26,9 +26,14 @@ controls, and you can drop a measured `.wav` IR over the top at any time.
 
 Whether the modelled cab is doing that job is now a measurement rather than
 a belief, and the first answer was no: against a reference cab it was +18 to
-+24 dB too bright from 3 kHz up. Fitting its filter parameters to a measured
-target takes that from 11.1 dB rms to 3.5 dB. `calibration/README.md` has
-the method.
++24 dB too bright from 3 kHz up. Fitting the filter parameters to a measured
+target took that from **11.1 dB rms to 2.0**, and those fitted values are
+what ships. `calibration/README.md` has the method.
+
+The numbers in the speaker table are a fit, so they are named for each
+filter's job in the chain rather than for a property of a real speaker —
+`res` at 260 Hz is not a V30's free-air resonance, it is the filter that
+gives the cab its low-mid body. The table is not a datasheet.
 
 ## The tone stack
 
@@ -80,17 +85,21 @@ to begin with.
 Cornering at 11 kHz instead costs nothing and takes the worst offender from
 −57 dB to −134 dB.
 
-> **Correction, found by measurement.** This paragraph used to justify the
-> 11 kHz corner with "the cab is 30 dB down by 8 kHz". That was not true of
-> the cab actually shipping here. Measured by differencing a cab-on and a
-> cab-off render (`tools/cabcurve.mjs`), the stock V30 is **15 dB** below its
-> own peak at 8 kHz, and its peak sits at **5 kHz** — +12.9 dB relative to
-> 1 kHz. The cab was loudest exactly where this page says fizz lives, which
-> is close to the opposite of the job it is described as doing.
+> **This claim used to be false, and the cab was fixed rather than the
+> sentence.** Measured by differencing a cab-on and a cab-off render
+> (`tools/cabcurve.mjs`), the V30 that shipped here was **15 dB** below its
+> own peak at 8 kHz, and that peak sat at **5 kHz**, +12.9 dB relative to
+> 1 kHz — loudest exactly where this page says fizz lives. Every speaker in
+> the table had it: all five peaked between 2 and 4 kHz and were only 8.5 to
+> 18 dB down at 8 kHz.
 >
-> The 11 kHz corner is still right; the aliasing numbers above are measured
-> and stand on their own. It was the justification that was wrong, not the
-> decision. See issue #23.
+> Fitting the filter model to a measured reference moved the V30's peak to
+> **315 Hz** and put 8 kHz **33 dB** below it, which is what the sentence
+> above always claimed. The other four were corrected by the same structural
+> change and now sit 24 to 39 dB down at 8 kHz, keeping their relative
+> voicing. The 11 kHz corner was never in doubt — its aliasing numbers were
+> measured independently — but it had been resting on a premise that was not
+> true. See issue #23.
 
 Measured, 7 kHz in at full gain, three stages, relative to the fundamental:
 

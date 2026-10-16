@@ -45,23 +45,31 @@ function seedOf(spec, speaker) {
 }
 
 export const SPEAKERS = {
-  g12m:   { name: 'Greenback 1x12',  res: 95,  resQ: 2.2, pres: 2400, presDb: 6,  top: 4600, tilt: -2 },
-  g12t:   { name: 'G12T-75 4x12',    res: 110, resQ: 2.6, pres: 3300, presDb: 8,  top: 5200, tilt: -1 },
-  v30:    { name: 'V30 2x12',        res: 100, resQ: 2.4, pres: 3800, presDb: 9,  top: 5000, tilt: 0 },
-  jensen: { name: 'Jensen 1x10',     res: 130, resQ: 1.8, pres: 2000, presDb: 5,  top: 5600, tilt: 1 },
-  blue:   { name: 'Alnico Blue 1x12',res: 85,  resQ: 2.0, pres: 2800, presDb: 7,  top: 6000, tilt: 1 },
+  g12m:   { name: 'Greenback 1x12',    res: 247, resQ: 4.2, pres: 2400, presDb: 3.45, top: 2529, tilt: -11.98 },
+  g12t:   { name: 'G12T-75 4x12',      res: 286, resQ: 4.96, pres: 3300, presDb: 4.59, top: 2859, tilt: -10.98 },
+  v30:    { name: 'V30 2x12',          res: 260, resQ: 4.58, pres: 3951, presDb: 5.17, top: 2749, tilt: -9.98 },
+  jensen: { name: 'Jensen 1x10',       res: 338, resQ: 3.44, pres: 2000, presDb: 2.87, top: 3079, tilt: -8.98 },
+  blue:   { name: 'Alnico Blue 1x12',  res: 221, resQ: 3.82, pres: 2800, presDb: 4.02, top: 3298, tilt: -8.98 },
 };
 
-/** The parts of the model that are not in the speaker table. Overridable
- *  for the same reason the preamp's voicing is: they have to be fitted
- *  against a measured response, and you cannot fit a literal. */
+/**
+ * The parts of the model that are not in the speaker table. Overridable for
+ * the same reason the preamp's voicing is: they have to be fitted against a
+ * measured response, and you cannot fit a literal.
+ *
+ * These values are a FIT, not a derivation, and the names describe each
+ * filter's job in the chain rather than a property of a real speaker. `res`
+ * at 260 Hz is not a V30's free-air resonance — it is the filter that, with
+ * the tilt below it, produces the low-mid body a guitar cab has. Worth
+ * saying plainly so nobody reads the table as a datasheet.
+ */
 export const CAB_SHAPE = {
-  hp: 72, hpQ: 0.7,          // the cab's own low rolloff
-  resDb: 5,                  // free-air resonance height
-  presQ: 1.3,                // cone breakup width
-  topQ: 1.1,                 // resonance of the first lowpass
-  top2: 1.5, top2Q: 0.6,     // second lowpass, as a multiple of `top`
-  tiltHz: 500,
+  hp: 115, hpQ: 1.59,        // the cab's own low rolloff
+  resDb: 3.53,               // body resonance height
+  presQ: 3.52,               // cone breakup width
+  topQ: 0.56,                // resonance of the first lowpass
+  top2: 2.5, top2Q: 1.5,     // second lowpass, as a multiple of `top`
+  tiltHz: 931,
 };
 
 /**

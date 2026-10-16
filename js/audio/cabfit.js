@@ -55,12 +55,15 @@ export function scoreAgainst(resp, freqs, targetDb) {
 
 /** Everything the search is allowed to move, with sane bounds. */
 export const FIT_BOUNDS = {
-  res: [60, 180], resQ: [0.8, 4], resDb: [0, 12],
-  pres: [1200, 5000], presQ: [0.5, 4], presDb: [0, 14],
-  top: [1800, 7000], topQ: [0.4, 2.0],
-  top2: [0.7, 2.5], top2Q: [0.3, 1.5],
-  tilt: [-8, 8], tiltHz: [200, 1200],
-  hp: [40, 140], hpQ: [0.4, 1.6],
+  res: [55, 260], resQ: [0.5, 6], resDb: [0, 16],
+  pres: [900, 5200], presQ: [0.4, 5], presDb: [0, 16],
+  top: [1500, 7000], topQ: [0.4, 2.0],
+  // top2 can sit BELOW the first lowpass. It could not before, and that was
+  // part of why nothing rolled off: two corners an octave apart give 6 dB
+  // per octave for that octave, where a guitar speaker falls off a cliff.
+  top2: [0.45, 2.5], top2Q: [0.3, 1.5],
+  tilt: [-10, 10], tiltHz: [150, 1600],
+  hp: [40, 160], hpQ: [0.4, 1.6],
 };
 
 /**
@@ -81,7 +84,48 @@ export async function fitCab(ctx, target, opts = {}) {
   const evaluate = async (p) =>
     scoreAgainst(responseOf(await renderCab(ctx, p), ctx.sampleRate, freq), freq, db);
 
-  let best = { ...base };
+  // Several starts, best kept.
+  //
+  // Coordinate descent on this surface is path dependent — widening the
+  // bounds once made the answer *worse*, which is the signature of a search
+  // settling into whichever local minimum it happened to walk into. A fit
+  // costs under a second, so the cure is to run it from a few places and
+  // keep the best rather than to believe the first one.
+  const restarts = opts.restarts ?? 6;
+  const seed = opts.seed ?? 12345;
+  let rnd = seed >>> 0;
+  const rand = () => {
+    rnd = (Math.imul(rnd ^ (rnd >>> 15), 1 | rnd) + 0x6d2b79f5) >>> 0;
+    return (rnd >>> 8) / 16777216;
+  };
+
+  let bestOverall = null;
+  for (let r = 0; r < restarts; r++) {
+    const start = r === 0 ? { ...base } : { ...base };
+    if (r > 0) {
+      for (const k of keys) {
+        const [lo, hi] = FIT_BOUNDS[k];
+        start[k] = lo + rand() * (hi - lo);
+      }
+    }
+    const got = await descend(start, keys, evaluate, opts);
+    if (!bestOverall || got.bestErr < bestOverall.bestErr) bestOverall = { ...got, restart: r };
+  }
+
+  const { best, bestErr, trace } = bestOverall;
+  return finish(best, bestErr, trace, base, keys, bestOverall.restart);
+}
+
+function finish(best, bestErr, trace, base, keys, restart) {
+  const changed = {};
+  for (const k of keys) {
+    if (Math.abs(best[k] - base[k]) > 1e-9) changed[k] = +best[k].toFixed(4);
+  }
+  return { err: +bestErr.toFixed(3), fitted: best, changed, trace, restart };
+}
+
+async function descend(start, keys, evaluate, opts) {
+  let best = { ...start };
   let bestErr = await evaluate(best);
   const trace = [{ pass: 0, err: +bestErr.toFixed(3) }];
 
@@ -111,11 +155,5 @@ export async function fitCab(ctx, target, opts = {}) {
     trace.push({ pass: pass + 1, err: +bestErr.toFixed(3) });
     if (!moved && pass > 2) break;
   }
-
-  // Report only what actually differs from where it started.
-  const changed = {};
-  for (const k of keys) {
-    if (Math.abs(best[k] - base[k]) > 1e-9) changed[k] = +best[k].toFixed(4);
-  }
-  return { err: +bestErr.toFixed(3), fitted: best, changed, trace };
+  return { best, bestErr, trace };
 }
