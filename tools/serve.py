@@ -21,7 +21,7 @@ import posixpath
 
 # Renders land here and nowhere else.
 SAVE_DIR = 'calibration'
-SAFE_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.wav$')
+SAFE_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(wav|json)$')
 MAX_BYTES = 256 * 1024 * 1024
 
 
@@ -45,7 +45,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
         parts = posixpath.normpath(self.path.lstrip('/')).split('/')
         if len(parts) != 2 or parts[0] != SAVE_DIR or not SAFE_NAME.match(parts[1]):
-            return self.send_error(403, f'only {SAVE_DIR}/<name>.wav')
+            return self.send_error(403, f'only {SAVE_DIR}/<name>.wav or .json')
 
         try:
             length = int(self.headers.get('Content-Length', 0))

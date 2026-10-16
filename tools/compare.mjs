@@ -77,29 +77,36 @@ const stim = mono(stimWav);
 const ours = load(args[0], stim, stimWav.rate);
 const ref = load(args[1], stim, stimWav.rate);
 
+const JSON_OUT = flags.has('--json');
+const metrics = { ours: args[0], reference: args[1] };
+// --json turns the report into something a tuning loop can rank on. The
+// printed version stays exactly as it was: a score is for searching, and a
+// human still has to look at which band is wrong and why.
+const say = (...a) => { if (!JSON_OUT) console.log(...a); };
+
 const pad = (s, n) => String(s).padStart(n);
 const sign = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
 let worst = [];
 
-console.log(`\n  ours       ${ours.path}`);
-console.log(`  reference  ${ref.path}\n`);
+say(`\n  ours       ${ours.path}`);
+say(`  reference  ${ref.path}\n`);
 for (const c of [ours, ref]) {
   const warn = c.score < 0.3 ? '   <-- weak, check this capture' : '';
-  console.log(`  ${c.path.split('/').pop().padEnd(28)} ${(c.frames / c.rate).toFixed(1)} s @ ${c.rate / 1000} kHz` +
+  say(`  ${c.path.split('/').pop().padEnd(28)} ${(c.frames / c.rate).toFixed(1)} s @ ${c.rate / 1000} kHz` +
     `   aligned ${c.offset >= 0 ? '+' : ''}${c.offset.toFixed(3)} s   corr ${c.score.toFixed(2)}${warn}`);
 }
 if (ours.score < 0.3 || ref.score < 0.3) {
-  console.log('\n  A low correlation means the stimulus was not found. Usually the capture');
-  console.log('  is of something else, is heavily gated, or is missing its first seconds.');
+  say('\n  A low correlation means the stimulus was not found. Usually the capture');
+  say('  is of something else, is heavily gated, or is missing its first seconds.');
 }
 for (const c of [ours, ref]) {
   if (!c.drift || Math.abs(c.drift.secs) < 0.05) continue;
   const pct = (c.drift.secs / c.drift.over) * 100;
-  console.log(`\n  !! ${c.path.split('/').pop()} does not run at the right speed.`);
-  console.log(`     Start and end disagree by ${(c.drift.secs * 1000).toFixed(0)} ms over ` +
+  say(`\n  !! ${c.path.split('/').pop()} does not run at the right speed.`);
+  say(`     Start and end disagree by ${(c.drift.secs * 1000).toFixed(0)} ms over ` +
     `${c.drift.over.toFixed(0)} s, about ${pct.toFixed(2)}%.`);
-  console.log('     Almost always a warped clip — in Ableton, turn Warp off on the');
-  console.log('     imported stimulus and bounce again. Everything below is unreliable.');
+  say('     Almost always a warped clip — in Ableton, turn Warp off on the');
+  say('     imported stimulus and bounce again. Everything below is unreliable.');
 }
 
 /* ---- 1 and 2: spectral balance, at two drive levels ---- */
@@ -107,7 +114,7 @@ for (const c of [ours, ref]) {
 function spectral(name, title) {
   const a = slice(ours, name, { trimStart: 0.2, trimEnd: 0.2 });
   const b = slice(ref, name, { trimStart: 0.2, trimEnd: 0.2 });
-  if (!a || !b) { console.log(`\n  ${title}: section missing from a capture`); return null; }
+  if (!a || !b) { say(`\n  ${title}: section missing from a capture`); return null; }
   const ba = bands(ours.x, a.from, a.len, ours.rate);
   const bb = bands(ref.x, b.from, b.len, ref.rate);
   const diff = ba.map((v, i) => v - bb[i]);
@@ -117,20 +124,21 @@ function spectral(name, title) {
   const rel = diff.map((v) => v - mean);
   const err = Math.sqrt(rel.reduce((s, v) => s + v * v, 0) / rel.length);
 
-  console.log(`\n${title}`);
-  console.log(`   level offset ${sign(mean)} dB, removed before comparing`);
+  say(`\n${title}`);
+  say(`   level offset ${sign(mean)} dB, removed before comparing`);
   for (let i = 0; i < THIRD_OCTAVE.length; i += 6) {
     const row = [];
     for (let j = i; j < Math.min(i + 6, THIRD_OCTAVE.length); j++) {
       const f = THIRD_OCTAVE[j];
       row.push(`${pad(f >= 1000 ? `${f / 1000}k` : f, 5)} ${pad(sign(rel[j]), 6)}`);
     }
-    console.log(`   ${row.join('  ')}`);
+    say(`   ${row.join('  ')}`);
   }
   let wi = 0;
   rel.forEach((v, i) => { if (Math.abs(v) > Math.abs(rel[wi])) wi = i; });
-  console.log(`   rms difference ${err.toFixed(2)} dB, worst ${sign(rel[wi])} dB at ${THIRD_OCTAVE[wi]} Hz`);
+  say(`   rms difference ${err.toFixed(2)} dB, worst ${sign(rel[wi])} dB at ${THIRD_OCTAVE[wi]} Hz`);
   worst.push({ what: title, err });
+  metrics[name] = { bands: rel.map((v) => +v.toFixed(2)), rms: +err.toFixed(3), levelOffset: +mean.toFixed(2) };
   return { rel, err };
 }
 
@@ -142,17 +150,18 @@ if (quiet && loud) {
   // Two amps can share a frequency response and still feel nothing alike.
   const move = quiet.rel.map((v, i) => loud.rel[i] - v);
   const e = Math.sqrt(move.reduce((s, v) => s + v * v, 0) / move.length);
-  console.log(`\n3. how the response moves with drive`);
-  console.log(`   difference between the two curves: ${e.toFixed(2)} dB rms`);
-  console.log(`   ${e < 1 ? 'both amps tighten up by about the same amount' : 'the amps respond to level differently — this is a preamp/sag difference, not an EQ one'}`);
+  metrics.driveMove = +e.toFixed(3);
+  say(`\n3. how the response moves with drive`);
+  say(`   difference between the two curves: ${e.toFixed(2)} dB rms`);
+  say(`   ${e < 1 ? 'both amps tighten up by about the same amount' : 'the amps respond to level differently — this is a preamp/sag difference, not an EQ one'}`);
 }
 
 /* ---- 4: harmonic series ---- */
 
-console.log(`\n4. harmonic series   (dB relative to the fundamental; ours / reference / diff)`);
+say(`\n4. harmonic series   (dB relative to the fundamental; ours / reference / diff)`);
 let hErr = [], hN = 0;
 for (const hz of manifest.toneHz) {
-  console.log(`   ${hz} Hz`);
+  say(`   ${hz} Hz`);
   for (const dbfs of manifest.toneDbfs) {
     const name = `tone-${hz}-${Math.abs(dbfs)}`;
     const a = slice(ours, name, { trimStart: 0.2, trimEnd: 0.15 });
@@ -170,14 +179,15 @@ for (const hz of manifest.toneHz) {
       if (real) { hErr.push(u - r); hN++; }
       cells.push(`H${i + 2} ${pad(sign(u), 6)}/${pad(sign(r), 6)}${real ? pad(sign(u - r), 7) : '      ·'}`);
     }
-    console.log(`     ${pad(`${dbfs} dBFS`, 9)}  ${cells.slice(0, 4).join('  ')}`);
+    say(`     ${pad(`${dbfs} dBFS`, 9)}  ${cells.slice(0, 4).join('  ')}`);
   }
 }
 if (hN) {
   const e = Math.sqrt(hErr.reduce((s, v) => s + v * v, 0) / hN);
   const bias = hErr.reduce((s, v) => s + v, 0) / hN;
-  console.log(`   rms difference ${e.toFixed(1)} dB over ${hN} harmonics, mean ${sign(bias)} dB`);
-  console.log(`   ${bias > 2 ? 'ours distorts more than the reference at matched input'
+  metrics.harmonics = { rms: +e.toFixed(3), mean: +bias.toFixed(3), n: hN };
+  say(`   rms difference ${e.toFixed(1)} dB over ${hN} harmonics, mean ${sign(bias)} dB`);
+  say(`   ${bias > 2 ? 'ours distorts more than the reference at matched input'
     : bias < -2 ? 'ours distorts less than the reference at matched input'
     : 'overall distortion depth is matched'}`);
   worst.push({ what: 'harmonic series', err: e });
@@ -193,21 +203,22 @@ if (da && dbs) {
   // Normalise each to its own peak: this is about the shape of the decay,
   // not how loud it was.
   const pa = Math.max(...ea.values), pb = Math.max(...eb.values);
-  console.log(`\n5. decay envelope   (struck chord, dB below each one's own peak)`);
+  say(`\n5. decay envelope   (struck chord, dB below each one's own peak)`);
   const row = [];
   for (let s = 0; s < 5; s++) {
     const i = Math.min(n - 1, Math.round((s * 1000) / 50));
     row.push(`${s}s ${pad(sign(ea.values[i] - pa), 6)}/${pad(sign(eb.values[i] - pb), 6)}`);
   }
-  console.log(`   ${row.join('   ')}`);
+  say(`   ${row.join('   ')}`);
   let se = 0, cnt = 0;
   for (let i = 0; i < n; i++) {
     if (ea.values[i] - pa < -55) break;
     se += ((ea.values[i] - pa) - (eb.values[i] - pb)) ** 2; cnt++;
   }
   const e = Math.sqrt(se / Math.max(1, cnt));
-  console.log(`   rms difference ${e.toFixed(2)} dB over the first ${(cnt * 50 / 1000).toFixed(1)} s`);
-  console.log(`   ${e < 1.5 ? 'compression and sag behave the same' : 'the two sustain differently — look at sag and the gate'}`);
+  metrics.decay = +e.toFixed(3);
+  say(`   rms difference ${e.toFixed(2)} dB over the first ${(cnt * 50 / 1000).toFixed(1)} s`);
+  say(`   ${e < 1.5 ? 'compression and sag behave the same' : 'the two sustain differently — look at sag and the gate'}`);
   worst.push({ what: 'decay envelope', err: e });
 }
 
@@ -229,14 +240,14 @@ for (const clip of manifest.di || []) {
   const rel = diff.map((v) => v - mean);
   const err = Math.sqrt(rel.reduce((x, v) => x + v * v, 0) / rel.length);
 
-  console.log(`\n6. real playing — ${clip.name}`);
+  say(`\n6. real playing — ${clip.name}`);
   for (let i = 0; i < THIRD_OCTAVE.length; i += 6) {
     const row = [];
     for (let j = i; j < Math.min(i + 6, THIRD_OCTAVE.length); j++) {
       const f = THIRD_OCTAVE[j];
       row.push(`${pad(f >= 1000 ? `${f / 1000}k` : f, 5)} ${pad(sign(rel[j]), 6)}`);
     }
-    console.log(`   ${row.join('  ')}`);
+    say(`   ${row.join('  ')}`);
   }
   // Crest factor is how much of the playing survived: a squashed amp returns
   // a smaller number, and two amps that measure the same on a sweep can
@@ -248,21 +259,44 @@ for (const clip of manifest.di || []) {
     return db(peak / Math.max(rms(c.x, sl.from, sl.len), 1e-12));
   };
   const ca = crest(ours, a), cb = crest(ref, b);
-  console.log(`   rms difference ${err.toFixed(2)} dB`);
-  console.log(`   crest factor   ours ${ca.toFixed(1)} dB / ref ${cb.toFixed(1)} dB` +
+  say(`   rms difference ${err.toFixed(2)} dB`);
+  say(`   crest factor   ours ${ca.toFixed(1)} dB / ref ${cb.toFixed(1)} dB` +
     `   ${Math.abs(ca - cb) < 1.5 ? 'dynamics match' : 'one is squashing the playing more than the other'}`);
   worst.push({ what: `real playing (${clip.name})`, err });
+  (metrics.playing = metrics.playing || {})[clip.slug] =
+    { rms: +err.toFixed(3), crestOurs: +ca.toFixed(2), crestRef: +cb.toFixed(2) };
 }
 
 /* ---- verdict ---- */
 
-console.log(`\nwhere the difference lives`);
+say(`\nwhere the difference lives`);
 worst.sort((a, b) => b.err - a.err);
-for (const w of worst) console.log(`   ${w.err.toFixed(2)} dB  ${w.what}`);
+for (const w of worst) say(`   ${w.err.toFixed(2)} dB  ${w.what}`);
 const hint = {
   '1. spectral balance, quiet sweep (-30 dBFS in)': 'cab first, then the tone stack — see issues #23 and the stack values',
   '2. spectral balance, driven sweep (-12 dBFS in)': 'cab and presence, with the preamp contributing',
   'harmonic series': 'preamp: the triode kp/kn asymmetry and the stage count — issue #24',
   'decay envelope': 'sag, the gate threshold, and the power supply time constant',
 };
-console.log(`\n   start with: ${hint[worst[0].what] || worst[0].what}\n`);
+say(`\n   start with: ${hint[worst[0].what] || worst[0].what}\n`);
+
+if (JSON_OUT) {
+  metrics.align = {
+    ours: { offset: +ours.offset.toFixed(4), corr: +ours.score.toFixed(3), rate: ours.rate },
+    reference: { offset: +ref.offset.toFixed(4), corr: +ref.score.toFixed(3), rate: ref.rate },
+  };
+  // A single number to search on. The weights say what "sounds like it"
+  // means here: the harmonic series carries the most, because it is the one
+  // thing an EQ cannot fake, and the two spectral curves carry the rest.
+  // Decay and crest matter but are noisier, so they are kept small.
+  const h = metrics.harmonics ? metrics.harmonics.rms : 0;
+  const q = metrics['sweep-quiet'] ? metrics['sweep-quiet'].rms : 0;
+  const d = metrics['sweep-loud'] ? metrics['sweep-loud'].rms : 0;
+  const play = metrics.playing ? Object.values(metrics.playing)[0].rms : 0;
+  metrics.score = +(0.40 * h + 0.20 * q + 0.20 * d + 0.12 * play
+    + 0.05 * (metrics.driveMove || 0) + 0.03 * (metrics.decay || 0)).toFixed(4);
+  metrics.unreliable = !!(ours.drift && Math.abs(ours.drift.secs) > 0.05)
+    || !!(ref.drift && Math.abs(ref.drift.secs) > 0.05)
+    || ours.score < 0.3 || ref.score < 0.3;
+  process.stdout.write(`${JSON.stringify(metrics)}\n`);
+}

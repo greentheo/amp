@@ -35,6 +35,7 @@ const KNOBS = {
 };
 
 const values = {};
+const KNOB_BY_KEY = {};
 let recorder = null, recChunks = [], recStart = 0;
 
 /* ---------------- knobs ---------------- */
@@ -50,6 +51,7 @@ function buildKnobs() {
       div.innerHTML = `<div class="dial"><i></i></div>
         <div class="k">${spec.label}</div><div class="v"></div>`;
       el.appendChild(div);
+      KNOB_BY_KEY[spec.k] = { spec, div };
       wireKnob(div, spec);
       paint(div, spec);
     }
@@ -124,6 +126,114 @@ function pushAll() {
     for (const spec of list) if (!spec.cab) push(spec);
   }
 }
+
+/* ---------------- automation ---------------- */
+
+// A deliberate surface for driving the amp from outside — the calibration
+// loop sets a hundred combinations of knobs and renders each one, and doing
+// that through synthetic pointer events on knob divs would be absurd.
+//
+// It is the same path the UI uses: setKnob goes through push() exactly as a
+// drag does, so an automated render cannot diverge from what you would get
+// by turning the knob yourself. That property is the whole point; a
+// calibration against a code path nobody listens to is worth nothing.
+
+function setKnob(k, v) {
+  const entry = KNOB_BY_KEY[k];
+  if (!entry) throw new Error(`no knob "${k}"`);
+  const { spec, div } = entry;
+  values[k] = Math.min(spec.max, Math.max(spec.min, v));
+  paint(div, spec);
+  push(spec);
+  return values[k];
+}
+
+function setSelect(id, v) {
+  const el = $(id);
+  if (!el) throw new Error(`no control "${id}"`);
+  el.value = String(v);
+  el.dispatchEvent(new Event('change'));
+  return el.value;
+}
+
+/** Everything that defines the sound right now, as a plain object. */
+function snapshot() {
+  return { ...values, stack: $('stack').value, stages: +$('stages').value,
+    speaker: $('speaker').value };
+}
+
+/**
+ * Apply a setting object: knob names go to knobs, `stack`/`stages`/`speaker`
+ * to their selects. Waits for the cab to re-render if it had to.
+ */
+async function applySetting(setting) {
+  let cab = false;
+  for (const [k, v] of Object.entries(setting)) {
+    if (k === 'stack' || k === 'stages' || k === 'speaker') {
+      setSelect(k, v);
+      if (k === 'speaker') cab = true;
+    } else {
+      setKnob(k, v);
+      if (KNOB_BY_KEY[k].spec.cab) cab = true;
+    }
+  }
+  // push() debounces cab re-rendering by 120 ms, and a render that starts
+  // before it lands would use the previous impulse response.
+  if (cab) await new Promise((r) => setTimeout(r, 260));
+  return snapshot();
+}
+
+window.amp = {
+  get engine() { return engine; },
+  snapshot,
+  set: applySetting,
+  knobs: () => Object.keys(KNOB_BY_KEY),
+
+  /** Render the current settings and save them. Returns the saved path. */
+  async render(name) {
+    const src = await amp._stimulus();
+    const out = await engine.renderStimulus(src);
+    const blob = new Blob([encodeWav(out)], { type: 'audio/wav' });
+    const file = `${(name || 'amp').replace(/[^A-Za-z0-9._-]/g, '-')}.wav`;
+    const res = await fetch(`calibration/${file}`, { method: 'PUT', body: blob });
+    if (!res.ok) throw new Error(`save failed: ${res.status}`);
+    return res.text();
+  },
+
+  /**
+   * Render a list of settings in one go. One call instead of one round trip
+   * per combination, which is the difference between a sweep that takes a
+   * minute and one that takes twenty.
+   */
+  async sweep(list, prefix = 'sweep') {
+    const done = [];
+    for (let i = 0; i < list.length; i++) {
+      await applySetting(list[i]);
+      const path = await amp.render(`${prefix}-${String(i).padStart(3, '0')}`);
+      done.push({ i, path, setting: snapshot() });
+      $('render-note').textContent = `sweep ${i + 1} of ${list.length}`;
+    }
+    // A manifest beside the renders, so a filename can be turned back into
+    // the settings that produced it. Without it the ranking can tell you
+    // which file won and not what it was, which is the only part you wanted.
+    await fetch('calibration/sweep.json', {
+      method: 'PUT',
+      body: new Blob([JSON.stringify(done, null, 2)], { type: 'application/json' }),
+    }).catch(() => {});
+    $('render-note').textContent = `sweep done — ${done.length} renders`;
+    return done;
+  },
+
+  _cached: null,
+  async _stimulus() {
+    if (!amp._cached) {
+      const res = await fetch('calibration/stimulus.wav');
+      if (!res.ok) throw new Error('no calibration/stimulus.wav — run tools/stimulus.mjs');
+      amp._cached = await res.arrayBuffer();
+    }
+    return amp._cached.slice(0);
+  },
+};
 
 /* ---------------- displays ---------------- */
 

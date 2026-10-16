@@ -123,12 +123,23 @@ export class Engine {
    */
   async renderStimulus(input) {
     if (!this.ctx) throw new Error('power the amp on first');
-    const rate = this.ctx.sampleRate;
 
-    // Decode against the live context so the stimulus lands at the rate the
-    // tone stack coefficients were computed for.
+    // Render at the STIMULUS's rate, not the live context's.
+    //
+    // The live context runs at whatever the output device is doing, and that
+    // is none of the measurement's business — plug in headphones and it can
+    // move from 48 kHz to 44.1 between two renders of the same settings.
+    // Decoding a 48 kHz stimulus into a 44.1 kHz context also resamples it
+    // on the way in, so the thing being measured is no longer the file.
+    const rate = input instanceof ArrayBuffer
+      ? (wavSampleRate(input) || this.ctx.sampleRate)
+      : input.sampleRate;
+
+    // decodeAudioData resamples to its own context's rate, so decode in a
+    // context that is already at the rate we want.
     const src = input instanceof ArrayBuffer
-      ? await this.ctx.decodeAudioData(input.slice(0))
+      ? await new OfflineAudioContext({ numberOfChannels: 1, length: 1, sampleRate: rate })
+        .decodeAudioData(input.slice(0))
       : input;
 
     // A tail, so the reverb and the last decay are not cut off mid-ring.
@@ -154,9 +165,18 @@ export class Engine {
     const { stack, treble, mid, bass } = this.tone;
     g.amp.port.postMessage({ type: 'tone', k: coeffs(stack, treble, mid, bass, rate * 4) });
 
-    // AudioBuffers belong to the context that made them, so the cab IR has
-    // to be copied rather than shared.
-    if (this.cab.buffer) g.cab.buffer = copyBuffer(off, this.cab.buffer);
+    // The cab has to be built for THIS context, not copied from the live one.
+    //
+    // An AudioBuffer carries its own sample rate, and a ConvolverNode refuses
+    // one that disagrees with its context — rightly, since the alternative is
+    // an impulse response played at the wrong speed, which is a different
+    // speaker. The generated cab is cheap to render again at the right rate;
+    // a loaded IR gets decoded again from the bytes it arrived as.
+    if (this.irData) {
+      g.cab.buffer = await off.decodeAudioData(this.irData.slice(0));
+    } else {
+      g.cab.buffer = await renderCab(off, this.cabOpts);
+    }
 
     const node = off.createBufferSource();
     node.buffer = copyBuffer(off, src);
@@ -168,12 +188,18 @@ export class Engine {
 
   async setCab(opts) {
     this.cabOpts = { ...(this.cabOpts || { speaker: 'v30', axis: 0.6, distance: 0.25 }), ...opts };
+    this.irData = null;                 // back to the generated cab
     this.cab.buffer = await renderCab(this.ctx, this.cabOpts);
   }
 
   /** Drop a measured impulse response in over the generated one. */
   async loadIR(file) {
-    const buf = await this.ctx.decodeAudioData(await file.arrayBuffer());
+    // Keep the bytes. An offline render at a different sample rate has to
+    // decode the IR again rather than reuse a buffer locked to this context's
+    // rate, and the original file is the only lossless way back.
+    const data = await file.arrayBuffer();
+    const buf = await this.ctx.decodeAudioData(data.slice(0));
+    this.irData = data;
     this.cab.buffer = buf;
     return buf.duration;
   }
@@ -273,4 +299,32 @@ function copyBuffer(ctx, buf) {
   const out = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
   for (let c = 0; c < buf.numberOfChannels; c++) out.copyToChannel(buf.getChannelData(c), c);
   return out;
+}
+
+/**
+ * Sample rate straight out of a WAV header, without decoding it.
+ *
+ * Needed to decide what rate to decode AT, which is a chicken-and-egg the
+ * Web Audio API has no other answer to: decodeAudioData resamples to the
+ * context it is called on, so you have to know the rate before you can
+ * decode without changing it.
+ *
+ * @returns {number|null} null if this is not a PCM WAV
+ */
+function wavSampleRate(ab) {
+  const v = new DataView(ab);
+  if (v.byteLength < 44) return null;
+  const tag = (o) => String.fromCharCode(v.getUint8(o), v.getUint8(o + 1),
+    v.getUint8(o + 2), v.getUint8(o + 3));
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
+  // Walk the chunks: anything that has been through an editor carries LIST
+  // or bext chunks before fmt.
+  let off = 12;
+  while (off + 8 <= v.byteLength) {
+    const id = tag(off);
+    const size = v.getUint32(off + 4, true);
+    if (id === 'fmt ') return v.getUint32(off + 12, true);
+    off += 8 + size + (size & 1);
+  }
+  return null;
 }

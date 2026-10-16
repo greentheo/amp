@@ -8,3 +8,5 @@ ref/
 calibration/*.wav
 calibration/stimulus.json
 calibration/di/
+.venv/
+.venv-x86/
