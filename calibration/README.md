@@ -27,6 +27,30 @@ way out is to drive both with an identical file and measure the recordings.
 
 Drop it in `calibration/di/`.
 
+### If you have not recorded one yet
+
+```bash
+node tools/fetch-di.mjs
+```
+
+That pulls FreePats *Electric Guitar FSBS (direct)* — a Fender recorded
+straight into an instrument input, 24-bit/48 kHz, released under **CC0 1.0**
+— and assembles a 26-second reference phrase into
+`calibration/di/freepats-cc0-reference.wav`. Public domain, so it can live in
+a public project's workflow without anyone having to think about it.
+
+Be clear about what it is. The source is a sampled instrument: single notes,
+each left to ring. The *tone* is real — real pickup, real strings, real DI,
+real decay, and it shows: the low E comes back with its second harmonic 4.8 dB
+**above** the fundamental, which is what a bridge pickup on an 82 Hz string
+actually does and what no synthesised DI will give you. But the *performance*
+is assembled by the script. Chords are real notes layered at strum offsets
+rather than six strings struck together, and there are no palm mutes, because
+a palm mute is a different timbre and not a shorter note — faking one would
+put a lie into the reference.
+
+A good stand-in and a bad substitute.
+
 The synthetic sections measure the amp. Your clip is what tells you whether
 the measurements were the ones that mattered, and it is the only section that
 will mean anything when you listen to the two captures back to back.
@@ -117,9 +141,26 @@ first few seconds.
 
 ## Sanity
 
-The tools were checked against captures with known answers: an identical copy
-shifted and attenuated reads 0.00 dB in every band and finds its offset to
-within a millisecond; a one-pole low pass reads back at the right corner and
-slope; and a `tanh` nonlinearity shows H3 and H5 while correctly leaving H2
-and H4 at the noise floor, which is the even-versus-odd distinction that
-separates a push-pull amp from a fuzz.
+The tools were checked against captures with known answers:
+
+* an identical copy, shifted 0.731 s and cut 6 dB, reads **0.00 dB in every
+  band**, recovers the level offset as exactly −6.0 dB, and finds its shift to
+  the millisecond
+* a one-pole low pass at 2.5 kHz reads back at the right corner and slope
+* a `tanh` nonlinearity shows H3 and H5 and correctly leaves H2 and H4 at the
+  noise floor — the even-versus-odd distinction that separates a push-pull amp
+  from a fuzz
+* a 44.1 kHz capture compared against a 48 kHz render aligns to within 4 ms of
+  the chain's measured 7 ms delay
+
+That last one was a bug before it was a test. Binning both envelopes by
+sample count rather than by duration put a 44.1 kHz bounce and a 48 kHz render
+on time scales 9% apart, and they correlated against nothing — which is the
+ordinary case, since DAWs bounce at 44.1 all the time.
+
+Alignment locks onto the marker rather than the whole file. Correlating
+everything sounds more robust and is not: two thirds of the stimulus is long
+smooth sweeps whose envelope barely moves over tens of milliseconds, so the
+peak sits on a plateau that the gate and the cab tilt. Whole-file alignment
+put a render whose true delay was 7 ms at −70 ms. The marker is three sharp
+bursts in silence and gives one unambiguous peak.

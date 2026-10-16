@@ -75,23 +75,72 @@ export function envelope(x, from, len, rate, hopMs = 10) {
 }
 
 /**
- * Where does `b` sit relative to `a`, in samples? Correlates the broadband
+ * Where does `b` sit relative to `a`, in seconds? Correlates the broadband
  * energy envelopes rather than the waveforms, which is the whole trick: a
  * distorted, EQ'd, re-amped copy of a signal looks nothing like it sample by
  * sample, but its loud and quiet moments land in the same places.
  *
- * @returns {{shift:number, score:number}} shift in samples, score in 0..1
+ * Each signal is reduced at its OWN sample rate into bins of a fixed
+ * duration, so the two envelopes share a time base rather than a sample
+ * index. This is not a detail: a 44.1 kHz bounce out of a DAW compared
+ * against a 48 kHz render is the ordinary case, and binning both by sample
+ * count puts them on time scales 9% apart, which correlates against nothing.
+ *
+ * @returns {{shift:number, score:number}} shift in SECONDS, score in 0..1
  */
-export function alignByEnvelope(a, b, rate, maxShiftSec = 10) {
-  const hop = Math.round(rate / 200);            // 5 ms resolution
-  const ea = coarse(a, hop), eb = coarse(b, hop);
-  const maxLag = Math.round((maxShiftSec * rate) / hop);
-  let best = 0, bestScore = -Infinity;
-  for (let lag = -maxLag; lag <= maxLag; lag++) {
+export function alignByEnvelope(a, rateA, b, rateB, maxShiftSec = 10, focus = null) {
+  // Two passes. The coarse one searches ten seconds at 5 ms, which is cheap
+  // and cannot miss; but a sweep's envelope barely changes over tens of
+  // milliseconds, so its peak sits on a plateau and lands ~70 ms out. The
+  // fine pass re-searches a narrow window at 1 ms, where the sharp things —
+  // tone onsets, note attacks — carry the correlation.
+  const scan = (binMs, centreSec, spanSec) => {
+    const ea = coarse(a, Math.max(1, Math.round((rateA * binMs) / 1000)));
+    const eb = coarse(b, Math.max(1, Math.round((rateB * binMs) / 1000)));
+    const centre = Math.round((centreSec * 1000) / binMs);
+    const span = Math.round((spanSec * 1000) / binMs);
+    let best = centre, bestScore = -Infinity;
+    for (let lag = centre - span; lag <= centre + span; lag++) {
+      const s = corr(ea, eb, lag);
+      if (s > bestScore) { bestScore = s; best = lag; }
+    }
+    return { shift: (best * binMs) / 1000, score: bestScore };
+  };
+
+  const rough = scan(5, 0, maxShiftSec);
+  if (!focus) {
+    const fine = scan(1, rough.shift, 0.25);
+    return fine.score >= rough.score ? fine : rough;
+  }
+
+  // Lock onto the marker instead of the whole file.
+  //
+  // Correlating everything sounds more robust and is not: two thirds of the
+  // stimulus is long smooth material, and its envelope barely moves over
+  // tens of milliseconds, so the correlation peak sits on a plateau that the
+  // amp's gate and cab tilt by a frame or two. Measured against a render
+  // whose true delay was 7 ms, the whole-file peak landed at -70 ms.
+  //
+  // The marker is three sharp bursts in silence, placed at a known point for
+  // this exact purpose. A short window of it gives one unambiguous peak.
+  const binMs = 0.5;
+  const hopA = Math.max(1, Math.round((rateA * binMs) / 1000));
+  const hopB = Math.max(1, Math.round((rateB * binMs) / 1000));
+  const from = Math.max(0, Math.round((focus.start - 0.2) * rateA));
+  const to = Math.min(a.length, Math.round((focus.start + focus.seconds + 0.2) * rateA));
+  const ea = coarse(a.subarray(from, to), hopA);
+  const eb = coarse(b, hopB);
+  const base = Math.round((from * 1000) / (rateA * binMs));   // window's own offset
+  const centre = Math.round((rough.shift * 1000) / binMs) + base;
+  const span = Math.round(300 / binMs);
+
+  let best = centre, bestScore = -Infinity;
+  for (let lag = centre - span; lag <= centre + span; lag++) {
     const s = corr(ea, eb, lag);
     if (s > bestScore) { bestScore = s; best = lag; }
   }
-  return { shift: best * hop, score: bestScore };
+  if (bestScore === -Infinity) return rough;
+  return { shift: ((best - base) * binMs) / 1000, score: bestScore };
 }
 
 function coarse(x, hop) {
@@ -122,12 +171,27 @@ function coarse(x, hop) {
   return e;
 }
 
+/**
+ * Pearson correlation over the overlap only. Normalising each envelope once
+ * over its whole length and then scoring a subrange is not the same thing
+ * and is not bounded by 1 — which shows up as a "correlation" of 1.05 and
+ * makes any threshold on the score meaningless.
+ */
 function corr(a, b, lag) {
-  let s = 0, n = 0;
   const from = Math.max(0, -lag);
   const to = Math.min(a.length, b.length - lag);
-  for (let i = from; i < to; i++) { s += a[i] * b[i + lag]; n++; }
-  return n < 50 ? -Infinity : s / n;
+  const n = to - from;
+  if (n < 50) return -Infinity;
+  let sa = 0, sb = 0;
+  for (let i = from; i < to; i++) { sa += a[i]; sb += b[i + lag]; }
+  const ma = sa / n, mb = sb / n;
+  let num = 0, da = 0, db2 = 0;
+  for (let i = from; i < to; i++) {
+    const u = a[i] - ma, v = b[i + lag] - mb;
+    num += u * v; da += u * u; db2 += v * v;
+  }
+  const den = Math.sqrt(da * db2);
+  return den > 1e-12 ? num / den : -Infinity;
 }
 
 /** ISO 1/3-octave centres over the range a guitar speaker lives in. */

@@ -30,11 +30,15 @@ const manifest = JSON.parse(readFileSync('calibration/stimulus.json', 'utf8'));
 function load(path, stim, stimRate) {
   const wav = readWav(path);
   const x = mono(wav);
-  const { shift, score } = alignByEnvelope(stim, x, Math.min(wav.rate, stimRate));
-  // The envelopes were correlated at the lower of the two rates; convert the
-  // lag back into this file's own timebase.
-  const secs = shift / Math.min(wav.rate, stimRate);
-  return { path, x, rate: wav.rate, offset: secs, score, frames: wav.frames };
+  // Both rates go in, and the offset comes back in seconds. Everything
+  // downstream works in seconds for the same reason: a capture does not
+  // have to share a sample rate with anything else here.
+  // The marker exists to be aligned on; hand it over rather than trusting
+  // the whole file's envelope, which the long sweeps flatten.
+  const m = manifest.sections.find((sec) => sec.name === 'marker');
+  const { shift, score } = alignByEnvelope(stim, stimRate, x, wav.rate, 10,
+    m ? { start: m.start, seconds: m.seconds } : null);
+  return { path, x, rate: wav.rate, offset: shift, score, frames: wav.frames };
 }
 
 const section = (name) => manifest.sections.find((s) => s.name === name);
