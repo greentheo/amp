@@ -34,9 +34,17 @@
   <button id="btn-rec" class="mini rec"><span class="dot"></span><span id="rec-label">Record</span></button>
   <span id="rec-time" class="stat">0:00</span>
   <button id="btn-panic" class="mini">Mute</button>
+  <button id="btn-midi-jump" class="mini mbtn" title="MIDI"><span id="midi-dot" class="mdot"></span>MIDI</button>
 </header>
 
 <main class="app">
+
+  <section class="row">
+    <div class="plate wide boardplate">
+      <div class="badge">PEDALBOARD</div>
+      <div id="pedalboard"></div>
+    </div>
+  </section>
 
   <section class="head">
     <div class="plate">
@@ -102,6 +110,28 @@
           <input type="file" id="stim-file" accept=".wav,audio/wav" hidden>
           <span class="note" id="render-note">calibration/stimulus.wav</span>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="plate wide" id="midi-panel">
+      <div class="badge">MIDI</div>
+      <div class="midirow">
+        <button class="mini" id="btn-midi">Connect MIDI</button>
+        <span class="state" id="midi-status">not connected</span>
+        <button class="mini" id="btn-map">Map controls</button>
+      </div>
+      <div class="mon"><span class="ml">last message</span><span id="mon-last">nothing yet</span><span id="mon-count" class="stat"></span></div>
+      <p class="note" id="learn-status">Press <b>Map controls</b>, click any knob or footswitch on the page,
+        then move the knob, fader, expression pedal or footswitch you want to drive it.
+        Right-click a control in map mode to unbind it. Esc to finish.</p>
+      <table class="maps" id="maps"></table>
+      <div class="midirow">
+        <button class="mini" id="btn-midi-export">Export map</button>
+        <button class="mini" id="btn-midi-import">Import map&hellip;</button>
+        <input type="file" id="midi-file" accept=".json,application/json" hidden>
+        <button class="mini" id="btn-midi-clear">Clear all</button>
       </div>
     </div>
   </section>

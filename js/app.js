@@ -6,6 +6,10 @@ import { STACKS } from './audio/tonestack.js';
 import { SPEAKERS } from './audio/cab.js';
 import { encodeWav } from './audio/wav.js';
 import { fitCab, responseOf, scoreAgainst } from './audio/cabfit.js';
+import { controls } from './controls.js';
+import { makeKnob, showCatching } from './ui/knob.js';
+import { initBoard, loadBoard } from './ui/board.js';
+import { Midi, sourceText } from './midi.js';
 
 const $ = (id) => document.getElementById(id);
 const engine = new Engine();
@@ -43,65 +47,45 @@ let recorder = null, recChunks = [], recStart = 0;
 
 /* ---------------- knobs ---------------- */
 
+// Each amp knob is a control in the registry, and the knob on screen is
+// just a view of it. Setting the control is what moves the sound, which is
+// why a MIDI knob, a drag and the automation surface cannot disagree.
+const GROUP = { preamp: 'Preamp', power: 'Power', cabknobs: 'Cabinet' };
+
 function buildKnobs() {
   for (const [host, list] of Object.entries(KNOBS)) {
     const el = $(host);
     for (const spec of list) {
       values[spec.k] = spec.def;
-      const div = document.createElement('div');
-      div.className = 'knob';
+      controls.register({
+        id: `amp.${spec.k}`, label: spec.label, group: GROUP[host],
+        min: spec.min, max: spec.max, def: spec.def,
+        // Bias is centred on zero and wants its sign; everything else reads
+        // 0..10 like the front of an amp.
+        fmt: spec.min < 0 ? (v) => v.toFixed(2) : null,
+        get: () => values[spec.k],
+        set: (v) => { values[spec.k] = v; push(spec); },
+      });
+      const div = makeKnob(`amp.${spec.k}`);
       div.dataset.k = spec.k;
-      div.innerHTML = `<div class="dial"><i></i></div>
-        <div class="k">${spec.label}</div><div class="v"></div>`;
       el.appendChild(div);
       KNOB_BY_KEY[spec.k] = { spec, div };
-      wireKnob(div, spec);
-      paint(div, spec);
     }
   }
-}
 
-const norm = (s, v) => (v - s.min) / (s.max - s.min);
-
-function paint(div, spec) {
-  const t = norm(spec, values[spec.k]);
-  div.querySelector('.dial').style.setProperty('--fill', t.toFixed(4));
-  const v = values[spec.k];
-  div.querySelector('.v').textContent =
-    spec.max - spec.min <= 1.001 && spec.min < 0 ? v.toFixed(2) : Math.round(t * 10);
-}
-
-function wireKnob(div, spec) {
-  let dragging = false, lastY = 0;
-  const apply = () => { paint(div, spec); push(spec); };
-
-  div.addEventListener('pointerdown', (e) => {
-    dragging = true; lastY = e.clientY;
-    div.setPointerCapture(e.pointerId);
+  // The stage count is a channel switch, so it is worth a footswitch or a
+  // knob too. Stepped: 1 to 4.
+  controls.register({
+    id: 'amp.stages', label: 'Stages', group: 'Preamp', kind: 'step',
+    min: 1, max: 4, step: 1, def: 3,
+    fmt: (v) => ['', 'clean', 'crunch', 'lead', 'modern'][v],
+    get: () => +$('stages').value,
+    set: (v) => {
+      $('stages').value = String(v);
+      if (engine.ctx) engine.set('stages', v);
+    },
   });
-  div.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    const span = spec.max - spec.min;
-    // Fine control on shift, because a guitar amp lives in the last 10%.
-    const step = span * (e.shiftKey ? 0.0012 : 0.006);
-    values[spec.k] = Math.min(spec.max, Math.max(spec.min, values[spec.k] + (lastY - e.clientY) * step));
-    lastY = e.clientY;
-    apply();
-  });
-  const up = (e) => {
-    dragging = false;
-    try { div.releasePointerCapture(e.pointerId); } catch {}
-  };
-  div.addEventListener('pointerup', up);
-  div.addEventListener('pointercancel', up);
-  div.addEventListener('dblclick', () => { values[spec.k] = spec.def; apply(); });
-  div.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const span = spec.max - spec.min;
-    values[spec.k] = Math.min(spec.max, Math.max(spec.min,
-      values[spec.k] - Math.sign(e.deltaY) * span * 0.02));
-    apply();
-  }, { passive: false });
+  $('stages').addEventListener('change', (e) => controls.emit('change', 'amp.stages', 'ui'));
 }
 
 let cabTimer = null;
@@ -142,12 +126,8 @@ function pushAll() {
 // calibration against a code path nobody listens to is worth nothing.
 
 function setKnob(k, v) {
-  const entry = KNOB_BY_KEY[k];
-  if (!entry) throw new Error(`no knob "${k}"`);
-  const { spec, div } = entry;
-  values[k] = Math.min(spec.max, Math.max(spec.min, v));
-  paint(div, spec);
-  push(spec);
+  if (!KNOB_BY_KEY[k]) throw new Error(`no knob "${k}"`);
+  controls.set(`amp.${k}`, v, 'automation');
   return values[k];
 }
 
@@ -275,6 +255,198 @@ window.amp = {
     return amp._cached.slice(0);
   },
 };
+
+/* ---------------- pedals and MIDI ---------------- */
+
+let midi = null;
+let mapping = false;
+
+function wireBoard() {
+  // A saved board comes back with its pedal uids intact, which is what keeps
+  // MIDI bindings to pedals pointing at the right pedal after a reload.
+  const saved = loadBoard();
+  if (saved) engine.board = saved;
+  const host = $('pedalboard');
+  initBoard({
+    engine, host,
+    onStructure: (removed) => {
+      let n = 0;
+      for (const uid of removed) n += midi ? midi.dropPrefix(`pedal.${uid}.`) : 0;
+      if (n) $('learn-status').textContent = `Removed ${n} binding${n > 1 ? 's' : ''} that pointed at the pedal you deleted.`;
+    },
+  });
+  host.addEventListener('rendered', refreshBadges);
+}
+
+/** Mark every bindable control with what drives it. */
+function refreshBadges() {
+  if (!midi) return;
+  for (const el of document.querySelectorAll('[data-ctl]')) {
+    const id = el.dataset.ctl;
+    const bs = midi.bindingsFor(id);
+    let mb = el.querySelector(':scope > .mb');
+    if (!mb) { mb = document.createElement('span'); mb.className = 'mb'; el.appendChild(mb); }
+    mb.textContent = bs.map(sourceText).join(' · ');
+    el.classList.toggle('bound', bs.length > 0);
+    el.classList.toggle('armed', mapping && midi.armed === id);
+  }
+}
+
+function setMapping(on) {
+  mapping = on;
+  document.body.classList.toggle('mapping', on);
+  $('btn-map').classList.toggle('on', on);
+  $('btn-map').textContent = on ? 'Done mapping' : 'Map controls';
+  if (!on && midi) midi.disarm();
+  if (on) {
+    $('learn-status').textContent = midi && midi.connected
+      ? 'Map mode: click a knob or footswitch, then move the hardware control.'
+      : 'Map mode is on, but no MIDI input is connected yet — press Connect MIDI first.';
+  }
+  refreshBadges();
+}
+
+function renderMaps() {
+  const t = $('maps');
+  if (!midi || !midi.bindings.length) {
+    t.innerHTML = '<tr><td class="empty">Nothing mapped yet.</td></tr>';
+    return;
+  }
+  t.innerHTML = `<tr><th>Control</th><th>Source</th><th>Device</th><th>Mode</th>
+    <th>Range</th><th title="Soft takeover: a knob waits until it reaches the current value before it drives it">Catch</th><th></th></tr>`;
+  for (const b of midi.bindings) {
+    const c = controls.get(b.id);
+    const tr = document.createElement('tr');
+    const isSwitch = c && c.kind === 'switch';
+    const modes = isSwitch
+      ? [['toggle', 'toggle per press'], ['follow', 'follow switch']]
+      : [['absolute', 'absolute'], ['relative', 'relative encoder']];
+    tr.innerHTML = `<td>${c ? controls.label(b.id) : `<i>${b.id} (missing)</i>`}</td>
+      <td class="src">${sourceText(b)} <span class="stat">ch${b.ch + 1}</span></td>
+      <td class="dev" title="${b.device || 'any device'}">${b.device || 'any'}</td>
+      <td><select>${modes.map(([v, l]) => `<option value="${v}"${b.mode === v ? ' selected' : ''}>${l}</option>`).join('')}</select></td>
+      <td>${isSwitch ? '' : `<input type="number" min="0" max="100" step="1" value="${Math.round(b.lo * 100)}">
+        <input type="number" min="0" max="100" step="1" value="${Math.round(b.hi * 100)}">`}</td>
+      <td>${isSwitch || b.mode === 'relative' ? '' : `<input type="checkbox"${b.takeover ? ' checked' : ''}>`}</td>
+      <td><button class="x" title="Unbind">&times;</button></td>`;
+    tr.querySelector('select').addEventListener('change', (e) => { b.mode = e.target.value; midi.save(); renderMaps(); });
+    const nums = tr.querySelectorAll('input[type=number]');
+    if (nums.length) {
+      nums[0].addEventListener('change', (e) => { b.lo = Math.min(1, Math.max(0, +e.target.value / 100)); midi.save(); });
+      nums[1].addEventListener('change', (e) => { b.hi = Math.min(1, Math.max(0, +e.target.value / 100)); midi.save(); });
+    }
+    const cb = tr.querySelector('input[type=checkbox]');
+    if (cb) cb.addEventListener('change', (e) => { b.takeover = e.target.checked; midi.save(); });
+    tr.querySelector('.x').addEventListener('click', () => midi.remove(b));
+    t.appendChild(tr);
+  }
+}
+
+function wireMidi() {
+  let monTimer = null, dotTimer = null;
+  midi = new Midi(controls, {
+    onStatus: (names) => {
+      const live = names.length > 0;
+      $('midi-status').textContent = live ? `${names.length} input${names.length > 1 ? 's' : ''} — ${names.join(', ')}` : 'MIDI is on, but no inputs were found';
+      $('midi-status').classList.toggle('live', live);
+      $('btn-midi').textContent = live ? 'Reconnect' : 'Retry';
+      $('midi-dot').classList.toggle('live', live);
+    },
+    // The decisive diagnostic. If this stays blank while you move a knob,
+    // nothing is reaching the page and no amount of mapping will help.
+    onActivity: (text, count, device) => {
+      const el = $('mon-last');
+      el.textContent = device ? `${device} — ${text}` : text;
+      el.classList.add('live');
+      $('mon-count').textContent = count;
+      clearTimeout(monTimer);
+      monTimer = setTimeout(() => el.classList.remove('live'), 400);
+      $('midi-dot').classList.add('blink');
+      clearTimeout(dotTimer);
+      dotTimer = setTimeout(() => $('midi-dot').classList.remove('blink'), 90);
+    },
+    onLearn: (id, msg) => {
+      if (msg) $('learn-status').textContent = msg;
+      else if (id) $('learn-status').textContent = `Armed: ${controls.label(id)} — move a knob, fader or expression pedal, or press a footswitch.`;
+      refreshBadges();
+    },
+    onBindings: () => { renderMaps(); refreshBadges(); },
+    onCatching: (id, n) => showCatching(id, n),
+  });
+
+  $('btn-midi').addEventListener('click', async () => {
+    try {
+      await midi.enable();
+    } catch (err) {
+      $('midi-status').textContent = err.message;
+    }
+  });
+  $('btn-midi-jump').addEventListener('click', () => $('midi-panel').scrollIntoView({ behavior: 'smooth' }));
+  $('btn-map').addEventListener('click', () => setMapping(!mapping));
+
+  // Map mode takes over clicks on bindable controls before the controls see
+  // them, so clicking a knob arms it instead of starting a drag and clicking
+  // a footswitch arms it instead of stomping it.
+  document.addEventListener('pointerdown', (e) => {
+    if (!mapping) return;
+    const el = e.target.closest('[data-ctl]');
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (midi.armed === el.dataset.ctl) midi.disarm(); else midi.arm(el.dataset.ctl);
+  }, true);
+  document.addEventListener('click', (e) => {
+    if (mapping && e.target.closest('[data-ctl]')) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('contextmenu', (e) => {
+    if (!mapping) return;
+    const el = e.target.closest('[data-ctl]');
+    if (!el) return;
+    e.preventDefault();
+    midi.unbindControl(el.dataset.ctl);
+    $('learn-status').textContent = `Unbound ${controls.label(el.dataset.ctl)}.`;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && mapping) setMapping(false);
+  });
+
+  $('btn-midi-export').addEventListener('click', () => {
+    const blob = new Blob([midi.toPreset()], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `amp-midi-${stamp()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  });
+  $('btn-midi-import').addEventListener('click', () => $('midi-file').click());
+  $('midi-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const n = midi.fromPreset(await f.text());
+      $('learn-status').textContent = `Loaded ${n} binding${n === 1 ? '' : 's'}.`;
+    } catch (err) {
+      $('learn-status').textContent = `Could not load that map: ${err.message}`;
+    }
+  });
+  $('btn-midi-clear').addEventListener('click', () => {
+    midi.clear();
+    $('learn-status').textContent = 'All bindings cleared.';
+  });
+
+  // If MIDI was granted in an earlier session, reconnect without a button.
+  // Otherwise the saved map is displayed while nothing is listening, which
+  // looks exactly like a working setup that has broken.
+  midi.autoEnable().catch(() => {});
+  if (!midi.available) {
+    $('midi-status').textContent = 'this browser has no Web MIDI (Chrome and Edge do; Safari does not yet)';
+    $('btn-midi').disabled = true;
+  }
+  renderMaps();
+  refreshBadges();
+  window.amp.midi = midi;
+}
 
 /* ---------------- displays ---------------- */
 
@@ -558,11 +730,13 @@ async function begin() {
 }
 
 buildKnobs();
+wireBoard();
 wireSelects();
 wireDI();
 wireInput();
 wireRecorder();
 wireCalibration();
+wireMidi();
 $('btn-begin').addEventListener('click', begin, { once: true });
 $('btn-panic').addEventListener('click', () => {
   if (!engine.ctx) return;
