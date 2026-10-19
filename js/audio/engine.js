@@ -1,6 +1,13 @@
 // The signal path, and the plumbing around it.
 //
-//   guitar / DI -> gate+amp (worklet) -> cab (convolver) -> reverb -> master
+//   guitar / DI -> [pedals, pre] -> gate+amp (worklet) -> cab (convolver)
+//               -> [pedals, post] -> reverb -> master
+//
+// Where a pedal sits is most of what it does, so there are two lanes. In
+// front of the amp a pedal changes how the amp distorts; after the cab it
+// only changes what you hear. A delay in front of a high-gain preamp
+// distorts its own repeats, which is almost never what anyone wants, and an
+// overdrive after the cab is just a fizzy mess — hence the defaults.
 //
 // The amp block is deliberately swappable. Right now it is the analytic
 // worklet; a neural engine lands in the same socket later, between `preIn`
@@ -9,6 +16,7 @@
 import { renderCab } from './cab.js';
 import { makeDI } from './di.js';
 import { coeffs } from './tonestack.js';
+import { PEDAL_TYPES, defaultBoard, findPedal } from './pedals.js';
 
 export class Engine {
   constructor() {
@@ -27,6 +35,10 @@ export class Engine {
     // — which in a sweep looks perfectly monotonic and is quietly off by
     // one step. The render uses these instead.
     this.requested = {};
+    // The pedalboard is state like any other: the live graph is built from
+    // it, and so is the offline render, so a render is what you hear.
+    this.board = defaultBoard();
+    this.pedalNodes = new Map();       // uid -> live AudioWorkletNode
   }
 
   /**
@@ -43,8 +55,12 @@ export class Engine {
    */
   buildChain(ctx) {
     const g = {};
+    // Sources connect to fxPreIn. With no pedals in a lane its in and out
+    // are simply joined; buildPedals() splices nodes in between.
+    g.fxPreIn = ctx.createGain();
     g.preIn = ctx.createGain();      // the engine socket: in
     g.preOut = ctx.createGain();     // and out
+    g.fxPreIn.connect(g.preIn);
 
     g.amp = new AudioWorkletNode(ctx, 'amp-processor', {
       numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
@@ -63,6 +79,11 @@ export class Engine {
     g.cabWet.connect(g.sum);
     g.cabDry.connect(g.sum);
 
+    g.fxPostIn = ctx.createGain();
+    g.fxPostOut = ctx.createGain();
+    g.sum.connect(g.fxPostIn);
+    g.fxPostIn.connect(g.fxPostOut);
+
     g.master = ctx.createGain();
     g.master.gain.value = 0.8;
 
@@ -73,16 +94,98 @@ export class Engine {
     g.verbSend = ctx.createGain();
     g.verbSend.gain.value = 0.12;
     g.verb.buffer = springIR(ctx);
-    g.sum.connect(g.verbSend).connect(g.verb).connect(g.master);
+    // Reverb taps after the post lane, so it hears the delay and the chorus
+    // — reverb last is the order nearly everyone wants.
+    g.fxPostOut.connect(g.verbSend).connect(g.verb).connect(g.master);
 
     g.limiter = ctx.createDynamicsCompressor();
     g.limiter.threshold.value = -2;
     g.limiter.ratio.value = 14;
     g.limiter.attack.value = 0.003;
     g.limiter.release.value = 0.18;
-    g.sum.connect(g.master);
+    g.fxPostOut.connect(g.master);
     g.master.connect(g.limiter);
     return g;
+  }
+
+  /**
+   * Splice a board's pedals into a chain built by buildChain(). Used for the
+   * live graph and for the offline render alike.
+   *
+   * @returns {Map<string, AudioWorkletNode>} uid -> node
+   */
+  buildPedals(ctx, g, board) {
+    const nodes = new Map();
+    const lane = (list, inNode, outNode) => {
+      inNode.disconnect();
+      let prev = inNode;
+      for (const p of list) {
+        const t = PEDAL_TYPES[p.type];
+        if (!t) continue;
+        const node = new AudioWorkletNode(ctx, t.processor, {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+          channelCount: 1, channelCountMode: 'explicit',
+        });
+        // Straight to .value, not a ramp: these are the pedal's starting
+        // state, and a freshly built node has nothing to ramp from.
+        node.parameters.get('on').value = p.on ? 1 : 0;
+        for (const [k, v] of Object.entries(p.values)) {
+          const param = node.parameters.get(k);
+          if (param) param.value = v;
+        }
+        prev.connect(node);
+        prev = node;
+        nodes.set(p.uid, node);
+      }
+      prev.connect(outNode);
+    };
+    lane(board.pre, g.fxPreIn, g.preIn);
+    lane(board.post, g.fxPostIn, g.fxPostOut);
+    return nodes;
+  }
+
+  /**
+   * Replace the live board. Structural changes — adding, removing,
+   * reordering — rebuild the lanes, so the output is dipped for the moment
+   * it takes. Knob turns and footswitches never come through here; they go
+   * to the existing node's parameters and do not click.
+   */
+  async setBoard(board) {
+    this.board = board;
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const dip = this.master.gain;
+    const keep = 'master' in this.requested ? this.requested.master : dip.value;
+    dip.cancelScheduledValues(t);
+    dip.setValueAtTime(dip.value, t);
+    dip.linearRampToValueAtTime(0, t + 0.012);
+    await new Promise((r) => setTimeout(r, 16));
+    for (const node of this.pedalNodes.values()) {
+      try { node.port.postMessage({ type: 'stop' }); node.disconnect(); } catch {}
+    }
+    this.pedalNodes = this.buildPedals(this.ctx, this, board);
+    const t2 = this.ctx.currentTime;
+    dip.setValueAtTime(0, t2);
+    dip.linearRampToValueAtTime(keep, t2 + 0.02);
+  }
+
+  /** Turn one pedal's knob. Smoothed, so a CC sweep does not zipper. */
+  setPedalValue(id, k, v) {
+    const hit = findPedal(this.board, id);
+    if (!hit) return;
+    hit.pedal.values[k] = v;
+    const node = this.pedalNodes.get(id);
+    const param = node && node.parameters.get(k);
+    if (param) param.setTargetAtTime(v, this.ctx.currentTime, 0.012);
+  }
+
+  /** Stomp. Not smoothed here — the pedal crossfades its own bypass. */
+  setPedalOn(id, on) {
+    const hit = findPedal(this.board, id);
+    if (!hit) return;
+    hit.pedal.on = !!on;
+    const node = this.pedalNodes.get(id);
+    if (node) node.parameters.get('on').setValueAtTime(on ? 1 : 0, this.ctx.currentTime);
   }
 
   async init() {
@@ -92,8 +195,10 @@ export class Engine {
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     this.ctx = ctx;
     await ctx.audioWorklet.addModule('js/audio/amp-worklet.js');
+    await ctx.audioWorklet.addModule('js/audio/pedal-worklet.js');
 
     Object.assign(this, this.buildChain(ctx));
+    this.pedalNodes = this.buildPedals(ctx, this, this.board);
     this.amp.port.onmessage = (e) => { if (this.onMeter) this.onMeter(e.data); };
     this.limiter.connect(ctx.destination);
 
@@ -107,7 +212,7 @@ export class Engine {
     this.diGain.gain.value = 0;
     this.di.buffer = makeDI(ctx, 'riff');
     this.di.loop = true;
-    this.di.connect(this.diGain).connect(this.preIn);
+    this.di.connect(this.diGain).connect(this.fxPreIn);
     this.di.start();
 
     await this.setCab({});
@@ -131,7 +236,7 @@ export class Engine {
    * @param {AudioBuffer|ArrayBuffer} input the stimulus
    * @returns {Promise<AudioBuffer>} the amp's output
    */
-  async renderStimulus(input) {
+  async renderStimulus(input, opts = {}) {
     if (!this.ctx) throw new Error('power the amp on first');
 
     // Render at the STIMULUS's rate, not the live context's.
@@ -156,9 +261,15 @@ export class Engine {
     const frames = src.length + Math.round(rate * 2);
     const off = new OfflineAudioContext({ numberOfChannels: 1, length: frames, sampleRate: rate });
     await off.audioWorklet.addModule('js/audio/amp-worklet.js');
+    await off.audioWorklet.addModule('js/audio/pedal-worklet.js');
 
     const g = this.buildChain(off);
     g.limiter.connect(off.destination);
+    // The same board, rebuilt here. A board of bypassed pedals passes the
+    // signal through bit for bit, so calibration renders are unaffected
+    // unless a pedal is actually on — opts.pedals:false leaves it out
+    // entirely when that matters.
+    if (opts.pedals !== false) this.buildPedals(off, g, this.board);
 
     // Carry every setting across, preferring what was asked for over what
     // the live AudioParam currently holds — see `requested`.
@@ -197,7 +308,7 @@ export class Engine {
 
     const node = off.createBufferSource();
     node.buffer = copyBuffer(off, src);
-    node.connect(g.preIn);
+    node.connect(g.fxPreIn);
     node.start();
 
     return off.startRendering();
@@ -286,7 +397,7 @@ export class Engine {
     });
     if (this.src) this.src.disconnect();
     this.src = this.ctx.createMediaStreamSource(this.stream);
-    this.src.connect(this.preIn);
+    this.src.connect(this.fxPreIn);
     return this.stream.getAudioTracks()[0].label;
   }
 
@@ -312,18 +423,33 @@ export class Engine {
   }
 }
 
-/** A short bright reverb: an amp's spring tank, roughly. */
+/**
+ * A short bright reverb: an amp's spring tank, roughly.
+ *
+ * Seeded noise, not Math.random(). Unseeded, every build of the chain drew
+ * a different tank, so two renders of identical settings differed by up to
+ * 0.04 — enough to make "do these pedals change anything when they are
+ * off?" unanswerable, because the answer was always yes. Same fix, same
+ * reason, as the cab's cone noise.
+ */
 function springIR(ctx) {
   const rate = ctx.sampleRate;
   const len = Math.round(rate * 1.4);
   const buf = ctx.createBuffer(2, len, rate);
+  let a = 0x5eed5;
+  const rand = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
   for (let c = 0; c < 2; c++) {
     const d = buf.getChannelData(c);
     for (let i = 0; i < len; i++) {
       const t = i / rate;
       const env = Math.exp(-t * 4.2);
       // The chirp is what makes a spring sound like a spring.
-      d[i] = (Math.random() * 2 - 1) * env * 0.5
+      d[i] = (rand() * 2 - 1) * env * 0.5
         + Math.sin(2 * Math.PI * (1400 - 900 * Math.min(1, t)) * t) * env * 0.08;
     }
   }
