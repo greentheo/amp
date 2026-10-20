@@ -448,6 +448,129 @@ function wireMidi() {
   window.amp.midi = midi;
 }
 
+/* ---------------- output ---------------- */
+
+// Where the amp plays: speakers, headphones, an interface. Remembered by
+// device id and by name, because Chrome hands out new ids when site data is
+// cleared, and "the Scarlett" should still mean the Scarlett afterwards.
+const OUT_STORE = 'amp.output.v1';
+let outLabel = 'System default';
+
+function savedOutput() {
+  try { return JSON.parse(localStorage.getItem(OUT_STORE)) || null; } catch { return null; }
+}
+
+function outNote(text) {
+  const el = $('out-state');
+  el.textContent = text || '';
+  el.classList.toggle('live', !!text);
+}
+
+/** Fill the picker. Returns true if real device names were available. */
+async function listOutputs() {
+  const sel = $('out-device');
+  if (!engine.canPickOutput) {
+    sel.disabled = true;
+    sel.title = 'This browser cannot send Web Audio to a chosen device. Chrome and Edge can; Safari and Firefox play through the system default.';
+    return false;
+  }
+  let devs = [];
+  try {
+    devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audiooutput');
+  } catch { /* no mediaDevices: leave the default */ }
+  // 'default' and 'communications' are aliases Chrome adds for whatever the
+  // OS has chosen; '' already means that, so they would only be duplicates.
+  const real = devs.filter((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  const named = real.some((d) => d.label);
+  sel.innerHTML = '';
+  sel.add(new Option('System default', ''));
+  if (named) {
+    for (const d of real) sel.add(new Option(d.label, d.deviceId));
+  } else {
+    // Until the page has had audio permission once, Chrome hides device
+    // names and most of the devices. Plugging in grants it.
+    const o = new Option('Plug in once to list outputs', '');
+    o.disabled = true;
+    sel.add(o);
+  }
+  const want = engine.sinkId;
+  sel.value = [...sel.options].some((o) => o.value === want) ? want : '';
+  return named;
+}
+
+/** Put back the output chosen last time, if it is still plugged in. */
+async function restoreOutput() {
+  const named = await listOutputs();
+  const saved = savedOutput();
+  if (!saved || !saved.deviceId) return;
+  const sel = $('out-device');
+  const opts = [...sel.options];
+  const hit = opts.find((o) => o.value === saved.deviceId)
+    || opts.find((o) => o.value && o.textContent === saved.label);
+  if (hit) {
+    sel.value = hit.value;
+    outLabel = hit.textContent;
+    if (engine.sinkId !== hit.value) await engine.setOutput(hit.value).catch(() => {});
+  } else if (!named && !engine.ctx) {
+    // Names hidden, so it cannot be checked yet. Try it at power-on; the
+    // engine falls back to the default if the device has gone.
+    engine.sinkId = saved.deviceId;
+  } else if (named) {
+    outNote(`${saved.label} is not connected — using the system default`);
+  }
+}
+
+function updateLatency() {
+  const l = engine.latency();
+  const el = $('latency');
+  if (!l) { el.textContent = '—'; return; }
+  // Until the output has reported its own latency the total is a floor, not
+  // a measurement, and it should look like one.
+  el.textContent = `${l.measured ? '' : '≥ '}${l.total.toFixed(1)} ms · ${engine.ctx.sampleRate / 1000} kHz`;
+  el.title = `round trip: input ${l.input.toFixed(1)} + processing ${l.base.toFixed(1)} + output ${l.out.toFixed(1)} ms`
+    + (l.measured ? '' : '\n(the output has not reported its latency yet)')
+    + (l.input ? '' : '\n(input latency not reported by this browser, or no input plugged in)');
+}
+
+function wireOutput() {
+  const sel = $('out-device');
+  sel.addEventListener('change', async () => {
+    const id = sel.value;
+    const label = id ? sel.selectedOptions[0].textContent : 'System default';
+    try {
+      await engine.setOutput(id);
+      outLabel = label;
+      try { localStorage.setItem(OUT_STORE, JSON.stringify({ deviceId: id, label })); } catch {}
+      outNote('');
+      // A different device has a different output latency, and the number
+      // in the header is only worth having if it is the real one.
+      if (engine.ctx) setTimeout(updateLatency, 300);
+    } catch (err) {
+      sel.value = engine.sinkId;
+      outNote(`could not switch to ${label}: ${err.name}`);
+    }
+  });
+
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', async () => {
+      const was = engine.sinkId;
+      const wasLabel = outLabel;
+      await listOutputs();
+      // The output we were playing through has been unplugged. Say so and
+      // move to the default, rather than leaving the amp playing into a
+      // device that is not there.
+      if (was && ![...$('out-device').options].some((o) => o.value === was)) {
+        await engine.setOutput('').catch(() => {});
+        $('out-device').value = '';
+        outLabel = 'System default';
+        outNote(`${wasLabel} was unplugged — now on the system default`);
+        if (engine.ctx) setTimeout(updateLatency, 300);
+      }
+    });
+  }
+  restoreOutput();
+}
+
 /* ---------------- displays ---------------- */
 
 function fit(c, h) {
@@ -522,9 +645,12 @@ function drawScope() {
   ctx.stroke();
 }
 
+let latTick = 0;
+
 function frame() {
   try {
     if (engine.ctx) {
+      if ((latTick++ % 60) === 0) updateLatency();
       $('meter-fill').style.width = `${Math.min(100, engine.level() * 100)}%`;
       drawScope();
       if (recorder && recorder.recording) {
@@ -598,6 +724,8 @@ async function wireInput() {
       for (const d of devices) sel.add(new Option(d.label || 'input', d.deviceId));
       sel.value = devices.find((d) => d.label === label)?.deviceId || sel.value;
       sel.hidden = devices.length < 2;
+      // Permission granted, so output names are visible now too.
+      await restoreOutput();
     } catch (err) {
       $('in-state').textContent = `no mic: ${err.name}`;
     }
@@ -722,10 +850,13 @@ async function begin() {
   engine.set('stages', +$('stages').value);
   drawCab();
 
-  const l = engine.latency();
-  $('latency').textContent = l
-    ? `${l.total.toFixed(1)} ms · ${engine.ctx.sampleRate / 1000} kHz`
-    : '—';
+  // If the remembered output had gone by power-on, the engine fell back to
+  // the default; show that rather than a picker that claims otherwise.
+  if ($('out-device').value !== engine.sinkId) {
+    $('out-device').value = engine.sinkId;
+    if (!engine.sinkId && savedOutput()?.deviceId) outNote('saved output not available — using the system default');
+  }
+  updateLatency();
   requestAnimationFrame(frame);
 }
 
@@ -734,6 +865,7 @@ wireBoard();
 wireSelects();
 wireDI();
 wireInput();
+wireOutput();
 wireRecorder();
 wireCalibration();
 wireMidi();

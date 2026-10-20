@@ -192,3 +192,9 @@ body.mapping [data-ctl].armed{outline:2px solid var(--accent);animation:arm 1s e
   background:conic-gradient(from 215deg, transparent calc(var(--ghost,0) * 290deg - 3deg),
     rgba(255,255,255,.75) 0 calc(var(--ghost,0) * 290deg + 3deg), transparent 0)}
 .catching .dial .ghost{display:block}
+
+/* ---------- output picker ---------- */
+.outsel{display:flex;align-items:center;gap:6px;margin-left:6px;
+  font:10px ui-monospace,monospace;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
+.outsel select{padding:4px 6px;font-size:12px}
+.outsel select:disabled{opacity:.5}

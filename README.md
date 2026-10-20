@@ -132,10 +132,19 @@ stage cancels most of them. A symmetric clipper sounds like a fuzz pedal.
 ## Latency
 
 `latencyHint: 'interactive'`, which is the whole difference between an amp you
-can play and a thing that answers you a fifth of a second later. The header
-reports the real round trip — 5.3 ms at 48 kHz on this machine. Input
+can play and a thing that answers you a fifth of a second later. Input
 processing is all explicitly disabled; echo cancellation in particular treats
 a sustained note as feedback and ducks it.
+
+The header reports the round trip: input capture, the graph's buffer, and the
+output device, refreshed while it runs. It used to say 5.3 ms, and that was
+wrong. It was read once at power-on, when Chrome still reports the output's
+latency as zero, and it never counted the input at all — so it was the
+graph's buffer alone. On the same machine the honest total was nearer 38 ms,
+most of it the output device. Which output you play through matters more than
+anything in the code, and the output picker exists partly so that difference
+can be seen and chosen. Until the output has reported, the figure is shown
+with a ≥ because it is a floor, not a measurement.
 
 ## The engine socket
 

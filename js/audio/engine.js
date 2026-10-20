@@ -39,6 +39,28 @@ export class Engine {
     // it, and so is the offline render, so a render is what you hear.
     this.board = defaultBoard();
     this.pedalNodes = new Map();       // uid -> live AudioWorkletNode
+    // Where the amp plays. '' is the system default.
+    this.sinkId = '';
+  }
+
+  /**
+   * Can this browser send Web Audio to a chosen device? Chrome and Edge can,
+   * on the context itself. Safari and Firefox cannot — Firefox only on media
+   * elements, and routing an amp through one of those would add its own
+   * buffering on top of the latency this whole design fights for.
+   */
+  get canPickOutput() {
+    return typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
+  }
+
+  /**
+   * Choose the output: speakers, headphones, an interface. Takes effect
+   * immediately if the amp is running, otherwise when it powers on.
+   * @param {string} deviceId '' for the system default
+   */
+  async setOutput(deviceId) {
+    this.sinkId = deviceId || '';
+    if (this.ctx && this.canPickOutput) await this.ctx.setSinkId(this.sinkId);
   }
 
   /**
@@ -194,6 +216,11 @@ export class Engine {
     // thing that answers you a fifth of a second later.
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     this.ctx = ctx;
+    // An output chosen before power-on. If that device has gone since, fall
+    // back to the default rather than refusing to start.
+    if (this.sinkId && this.canPickOutput) {
+      try { await ctx.setSinkId(this.sinkId); } catch { this.sinkId = ''; }
+    }
     await ctx.audioWorklet.addModule('js/audio/amp-worklet.js');
     await ctx.audioWorklet.addModule('js/audio/pedal-worklet.js');
 
@@ -401,12 +428,27 @@ export class Engine {
     return this.stream.getAudioTracks()[0].label;
   }
 
-  /** Round-trip latency in ms, as honestly as the browser will say. */
+  /**
+   * Round-trip latency in ms, as honestly as the browser will say: the
+   * input's capture latency, the graph's own buffer, and the output device.
+   *
+   * This used to be read once, at power-on, and reported 5 ms. That was the
+   * graph buffer alone: Chrome reports outputLatency as 0 until the device
+   * has been running for a moment, and input latency was never counted at
+   * all. The real figure on the same machine was nearer 38 ms. Read it
+   * repeatedly, and include every part the browser will admit to.
+   */
   latency() {
     if (!this.ctx) return null;
     const base = (this.ctx.baseLatency || 0) * 1000;
     const out = (this.ctx.outputLatency || 0) * 1000;
-    return { base, out, total: base + out };
+    let input = 0;
+    const track = this.stream && this.stream.getAudioTracks()[0];
+    if (track && track.getSettings) {
+      const l = track.getSettings().latency;
+      if (typeof l === 'number' && Number.isFinite(l)) input = l * 1000;
+    }
+    return { input, base, out, total: input + base + out, measured: out > 0 };
   }
 
   level() {
