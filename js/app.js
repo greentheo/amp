@@ -677,7 +677,7 @@ function wireLagTest() {
           ? ` — <b>${r.ms > r.claimed ? 'it is under-reporting' : 'it is over-reporting'} by ${Math.abs(r.ms - r.claimed).toFixed(1)} ms</b>` : ', which is about right'}</div>
         <div class="lagverdict">${verdict}</div>
         ${r.clipped ? '<div class="bad">The returning chirp clipped the input — turn the level down and run it again for a cleaner number.</div>' : ''}
-        ${r.spread > 1 ? '<div class="bad">The chirps disagree by more than a millisecond, which usually means an acoustic loop with echoes. A cable loop will be steadier.</div>' : ''}`;
+        ${r.spread > 1 ? '<div class="bad">The chirps disagree by more than a millisecond. Through a speaker that is echoes; through a cable it is jitter, usually from In and Out being two separate devices whose clocks drift against each other.</div>' : ''}`;
       try {
         const log = JSON.parse(localStorage.getItem('amp.lagtests') || '[]');
         log.push({ at: Date.now(), ms: +r.ms.toFixed(2), claimed: +r.claimed.toFixed(2), rate: r.rate,

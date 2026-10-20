@@ -441,12 +441,16 @@ export class Engine {
 
   async enableInput(deviceId) {
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+    this.inputId = deviceId || null;
     // Every one of these is built to wreck a guitar signal. Echo cancellation
     // in particular treats a sustained note as feedback and ducks it.
+    // `latency: 0` asks for the smallest capture buffer; browsers that ignore
+    // it lose nothing.
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-        channelCount: 1, ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        channelCount: 1, latency: { ideal: 0 },
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       },
     });
     this.connectInput();
@@ -632,7 +636,17 @@ export class Engine {
     if (Object.keys(this.voicing).length) {
       this.amp.port.postMessage({ type: 'voicing', v: { ...this.voicing } });
     }
-    this.connectInput();
+    // A fresh capture stream, not the old one reattached. Measured: the same
+    // devices gave 34 ms on a context opened from cold and 73 ms after the
+    // context had been rebuilt with the old stream reconnected — far more
+    // than the buffer change between them could account for. The capture
+    // side keeps delivering while the new context is being built, and what
+    // piles up in between never drains. Reopening the device starts the
+    // input from empty.
+    if (this.stream) {
+      await new Promise((r) => setTimeout(r, 150));
+      try { await this.enableInput(this.inputId); } catch { this.connectInput(); }
+    }
     if (this.diOn) this.setDI(true, this.diShape);
   }
 
