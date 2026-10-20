@@ -84,9 +84,10 @@ add_dependencies(AmpWebUI Amp_Standalone)
 # Signing. Left empty, the build is ad-hoc signed, which macOS treats as a
 # new app after every rebuild and asks for the microphone again. Name an
 # identity from `security find-identity -v -p codesigning` and the
-# permission sticks:
+# permission sticks. Its 40-character hash is safer than its name when two
+# certificates share a name, as one person's do across two teams:
 #
-#   cmake -B build -DAMP_CODESIGN_IDENTITY="Apple Development: Name (XXXXXXXXXX)"
+#   cmake -B build -DAMP_CODESIGN_IDENTITY=<hash or "Apple Development: Name (XXXXXXXXXX)">
 #
 # Signing is the last step, after the page is copied in, so the signature
 # seals the page too.
