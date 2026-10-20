@@ -44,7 +44,7 @@ protected:
     Pedal(double rate, std::vector<std::pair<std::string, float>> params);
 
     /** Knob i's value, in the order the constructor declared them; 0 is "on". */
-    double knob(int i) const { return values_[i]; }
+    double knob(int i) const { return values_[static_cast<size_t>(i)]; }
 
     virtual void render(const float* x, float* y, int n, int on) = 0;
     /** True while a bypassed pedal still has something to say (delay tails). */

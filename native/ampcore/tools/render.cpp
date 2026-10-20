@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     }
     if (argc < 3) {
         std::fprintf(stderr,
-            "usage: ampcore-render in.wav out.wav --chain settings.json\n"
+            "usage: ampcore-render in.wav out.wav --chain settings.json [--block n]\n"
             "       ampcore-render in.wav out.wav [--drive x] [--bias x] [--presence x] [--sag x]\n"
             "       [--master-vol x] [--gate x] [--stages n] [--stack id] [--bass x] [--mid x]\n"
             "       [--treble x] [--no-tone] [--tail seconds]\n");
@@ -67,10 +67,13 @@ int main(int argc, char** argv) {
         std::vector<float> x(in.mono);
         x.resize(x.size() + static_cast<size_t>(num("tail", 2.0) * in.rate + 0.5), 0.0f);
         std::vector<float> y(x.size());
-        float l[128], r[128];
-        for (size_t at = 0; at < x.size(); at += 128) {
-            const int n = static_cast<int>(std::min<size_t>(128, x.size() - at));
-            chain.process(&x[at], l, r, n);
+        // --block is the host's block size, as a device or a DAW would pick
+        // it. With settings held still it should make no difference at all.
+        const size_t block = static_cast<size_t>(num("block", 128));
+        std::vector<float> l(block), r(block);
+        for (size_t at = 0; at < x.size(); at += block) {
+            const int n = static_cast<int>(std::min(block, x.size() - at));
+            chain.process(&x[at], l.data(), r.data(), n);
             // Stereo into a one-channel destination: Chromium's speaker
             // down-mix, 0.5 * L summed with 0.5 * R.
             for (int i = 0; i < n; i++) y[at + i] = 0.5f * l[i] + 0.5f * r[i];

@@ -12,5 +12,6 @@ calibration/di/
 .venv/
 .venv-x86/
 
-# Native build output.
+# Native build output, and JUCE as fetched for it.
 native/*/build/
+native/.deps/

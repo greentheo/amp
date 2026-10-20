@@ -227,6 +227,21 @@ pass mark. To re-check after a change, render references in the page with
 node tools/native-null.mjs chain
 ```
 
+The app, `native/app`, wraps the chain in JUCE 9 (under its AGPLv3 option)
+as a standalone; the AU and VST3 come later from the same code. It needs
+CMake 3.22 or newer, and fetches JUCE itself on the first configure:
+
+```
+(cd native/app && cmake -B build -G Ninja && cmake --build build)
+open native/app/build/Amp_artefacts/Release/Standalone/Amp.app
+```
+
+JUCE's standalone starts with the input muted, in case it is a microphone
+next to a speaker. Open its settings from the banner, pick the guitar's input
+and the output, untick the mute, and choose the smallest buffer that plays
+without crackling. For now the knobs are JUCE's generic sliders; the
+browser's own panel moves into a WebView next.
+
 ## The engine socket
 
 The amp block sits between `preIn` and `preOut` in `engine.js` and nothing

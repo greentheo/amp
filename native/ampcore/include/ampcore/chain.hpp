@@ -44,16 +44,37 @@ public:
     Chain(double rate, const ChainSettings& s);
 
     /**
-     * Mono in, stereo out, any block length up to 128. The amp and the
-     * pedals read their knobs once per call, as k-rate AudioParams are read
-     * once per quantum, so 128-frame calls match the browser exactly.
+     * Mono in, stereo out, any block length; `in` may be `outL`. Blocks are
+     * cut into pieces of at most 128 frames, and the amp and the pedals read
+     * their knobs once per piece, as k-rate AudioParams are read once per
+     * quantum. With the knobs held still the block size makes no difference;
+     * 128-frame calls also match the browser while they move.
      */
     void process(const float* in, float* outL, float* outR, int n);
+
+    /**
+     * Live changes, the way engine.set() makes them in the browser: each
+     * value glides to its target with the time constant engine.js gives it
+     * (20 ms on the amp's knobs, 30 on master and cab mix, 50 on the reverb
+     * send), stepped once per block. Call from the audio thread, between
+     * process() calls. A render that never calls them is untouched by them.
+     */
+    void setAmp(const AmpParams& target);
+    void setMix(double cabMix, double reverb, double master);
+    /** The tone stack switches at once, as a posted coefficient set does. */
+    void setTone(const std::string& stack, double treble, double mid, double bass);
 
 private:
     static constexpr int MAX_BLOCK = 128;
 
-    AmpParams params_;
+    void glide(int frames);
+
+    const double rate_;
+    AmpParams params_, ampTo_;
+    double mix_, mixTo_, sendNow_, sendTo_, masterNow_, masterTo_;
+    bool gliding_ = false;
+    std::string stack_;
+    double treble_, mid_, bass_;
     Amp amp_;
     Convolver cab_;
     Reverb verb_;

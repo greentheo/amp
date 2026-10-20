@@ -1,6 +1,7 @@
 #include "ampcore/chain.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace ampcore {
 
@@ -102,7 +103,11 @@ ChainSettings ChainSettings::fromJson(const Json& j) {
 }
 
 Chain::Chain(double rate, const ChainSettings& s)
-    : amp_(rate, s.voicing),
+    : rate_(rate),
+      mix_(s.cabMix), mixTo_(s.cabMix), sendNow_(s.reverb), sendTo_(s.reverb),
+      masterNow_(s.master), masterTo_(s.master),
+      stack_(s.stack), treble_(s.treble), mid_(s.mid), bass_(s.bass),
+      amp_(rate, s.voicing),
       cab_(renderCab(rate, s.cab)),
       verb_(springIR(rate), rate, true),
       limiter_(rate),
@@ -119,12 +124,70 @@ Chain::Chain(double rate, const ChainSettings& s)
     params_.masterVol = asParam(s.amp.masterVol);
     params_.gate = asParam(s.amp.gate);
     params_.stages = asParam(s.amp.stages);
+    ampTo_ = params_;
     amp_.setTone(coeffs(s.stack, s.treble, s.mid, s.bass, rate * Amp::OS));
+}
+
+void Chain::setAmp(const AmpParams& t) {
+    ampTo_.drive = asParam(t.drive);
+    ampTo_.bias = asParam(t.bias);
+    ampTo_.presence = asParam(t.presence);
+    ampTo_.sag = asParam(t.sag);
+    ampTo_.masterVol = asParam(t.masterVol);
+    ampTo_.gate = asParam(t.gate);
+    // A stage count is a switch, not a knob: no glide.
+    params_.stages = ampTo_.stages = asParam(t.stages);
+    gliding_ = gliding_ || ampTo_.drive != params_.drive || ampTo_.bias != params_.bias
+        || ampTo_.presence != params_.presence || ampTo_.sag != params_.sag
+        || ampTo_.masterVol != params_.masterVol || ampTo_.gate != params_.gate;
+}
+
+void Chain::setMix(double cabMix, double reverb, double master) {
+    mixTo_ = cabMix;
+    sendTo_ = reverb;
+    masterTo_ = master;
+    gliding_ = gliding_ || mixTo_ != mix_ || sendTo_ != sendNow_ || masterTo_ != masterNow_;
+}
+
+void Chain::setTone(const std::string& stack, double treble, double mid, double bass) {
+    if (stack == stack_ && treble == treble_ && mid == mid_ && bass == bass_) return;
+    stack_ = stack;
+    treble_ = treble;
+    mid_ = mid;
+    bass_ = bass;
+    amp_.setTone(coeffs(stack_, treble_, mid_, bass_, rate_ * Amp::OS));
+}
+
+void Chain::glide(int frames) {
+    if (!gliding_) return;
+    auto step = [&](double& v, double to, double tau) {
+        v += (to - v) * (1 - std::exp(-frames / (tau * rate_)));
+        if (std::fabs(to - v) < 1e-7) v = to;
+    };
+    step(params_.drive, ampTo_.drive, 0.02);
+    step(params_.bias, ampTo_.bias, 0.02);
+    step(params_.presence, ampTo_.presence, 0.02);
+    step(params_.sag, ampTo_.sag, 0.02);
+    step(params_.masterVol, ampTo_.masterVol, 0.02);
+    step(params_.gate, ampTo_.gate, 0.02);
+    step(mix_, mixTo_, 0.03);
+    step(sendNow_, sendTo_, 0.05);
+    step(masterNow_, masterTo_, 0.03);
+    wet_ = asParam(mix_);
+    dry_ = asParam(1 - mix_);
+    send_ = asParam(sendNow_);
+    master_ = asParam(masterNow_);
+    // Arrived: stop stepping until something moves again.
+    gliding_ = params_.drive != ampTo_.drive || params_.bias != ampTo_.bias
+        || params_.presence != ampTo_.presence || params_.sag != ampTo_.sag
+        || params_.masterVol != ampTo_.masterVol || params_.gate != ampTo_.gate
+        || mix_ != mixTo_ || sendNow_ != sendTo_ || masterNow_ != masterTo_;
 }
 
 void Chain::process(const float* in, float* outL, float* outR, int n) {
     for (int at = 0; at < n; at += MAX_BLOCK) {
         const int m = std::min(MAX_BLOCK, n - at);
+        glide(m);
         float* a = a_;
         std::copy(in + at, in + at + m, a);
         for (auto& p : pre_) p->process(a, a, m);

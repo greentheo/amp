@@ -6,6 +6,7 @@
 // 0.55 in the browser is the same double here, not a neighbour of it.
 
 #pragma once
+#include <cmath>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -39,7 +40,10 @@ struct Json {
     }
     bool truthy(const std::string& key) const {
         const Json* v = get(key);
-        return v && ((v->type == Bool && v->b) || (v->type == Number && v->n != 0));
+        // JavaScript's truthiness for the two types a flag arrives as: true,
+        // or any number but 0 and NaN.
+        return v && ((v->type == Bool && v->b)
+                     || (v->type == Number && std::fpclassify(v->n) != FP_ZERO && !std::isnan(v->n)));
     }
 
     static Json parse(const std::string& text) {
@@ -79,7 +83,7 @@ private:
             case 'u': {
                 // Basic multilingual plane only, as UTF-8 — enough for names.
                 if (i + 4 >= t.size()) fail(i, "short \\u escape");
-                const unsigned c = std::stoul(t.substr(i + 1, 4), nullptr, 16);
+                const auto c = static_cast<unsigned>(std::stoul(t.substr(i + 1, 4), nullptr, 16));
                 i += 4;
                 if (c < 0x80) out += char(c);
                 else if (c < 0x800) { out += char(0xc0 | c >> 6); out += char(0x80 | (c & 63)); }
