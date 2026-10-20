@@ -136,11 +136,11 @@ export class Engine {
     // — reverb last is the order nearly everyone wants.
     g.fxPostOut.connect(g.verbSend).connect(g.verb).connect(g.master);
 
-    g.limiter = ctx.createDynamicsCompressor();
-    g.limiter.threshold.value = -2;
-    g.limiter.ratio.value = 14;
-    g.limiter.attack.value = 0.003;
-    g.limiter.release.value = 0.18;
+    // Zero-latency peak limiter at -1 dBFS — see OutLimiter in
+    // amp-worklet.js for why it is not a DynamicsCompressorNode.
+    g.limiter = new AudioWorkletNode(ctx, 'out-limiter', {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+    });
     g.fxPostOut.connect(g.master);
     g.master.connect(g.limiter);
     return g;

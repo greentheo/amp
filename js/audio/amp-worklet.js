@@ -432,4 +432,66 @@ class AmpProcessor extends AudioWorkletProcessor {
   }
 }
 
+/**
+ * The output ceiling: a peak limiter with no lookahead.
+ *
+ * This replaced a DynamicsCompressorNode, and measuring that node is why.
+ * It delayed every sample by 288 frames — a fixed 6 ms of lookahead, added to
+ * the amp's real latency and invisible to the lag test, whose chirps did not
+ * pass through it. It could not be ported either: it is Chrome's own
+ * algorithm, and a native build could only approximate it.
+ *
+ * What it did to the sound was smaller than it first looked. An isolated
+ * impulse after silence came out 8.9 dB down, really ducked rather than
+ * smeared — but steady tones at -20 and -4 dBFS came through within 0.02 dB,
+ * and every section of the calibration stimulus within 0.1. On real program
+ * it was transparent in level, so earlier calibration results stand.
+ *
+ * This one is trivially the same in any language. The envelope rises
+ * instantly with the peak and falls back over 80 ms; the gain is the ceiling
+ * over the envelope, applied to the same sample, so the output cannot pass
+ * the ceiling and no lookahead is needed. Below the ceiling it does nothing —
+ * not "very little", nothing: the samples pass through untouched.
+ */
+class OutLimiter extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.env = 0;
+    this.ceil = Math.pow(10, -1 / 20);                 // -1 dBFS
+    this.rel = Math.exp(-1 / (0.08 * sampleRate));
+  }
+
+  process(inputs, outputs) {
+    const out = outputs[0];
+    if (!out || !out.length) return true;
+    const inp = inputs[0] || [];
+    const n = out[0].length, nc = out.length;
+    for (let c = 0; c < nc; c++) {
+      const src = inp.length ? inp[Math.min(c, inp.length - 1)] : null;
+      if (src) out[c].set(src); else out[c].fill(0);
+    }
+    for (let i = 0; i < n; i++) {
+      let p = 0;
+      for (let c = 0; c < nc; c++) {
+        let v = out[c][i];
+        if (!Number.isFinite(v)) { v = 0; out[c][i] = 0; }
+        const a = v < 0 ? -v : v;
+        if (a > p) p = a;
+      }
+      // max(), not "rise or decay": decaying first can take the envelope
+      // below the very sample it is about to limit, and then the gain comes
+      // out above one for that sample. Caught by a hot sine leaking 0.002 dB
+      // over the ceiling on 160 samples.
+      const decayed = this.env * this.rel;
+      this.env = p > decayed ? p : decayed;
+      if (this.env > this.ceil) {
+        const g = this.ceil / this.env;
+        for (let c = 0; c < nc; c++) out[c][i] *= g;
+      }
+    }
+    return true;
+  }
+}
+
 registerProcessor('amp-processor', AmpProcessor);
+registerProcessor('out-limiter', OutLimiter);
