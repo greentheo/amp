@@ -406,14 +406,33 @@ Pedal::Pedal(double rate, std::vector<std::pair<std::string, float>> params)
         names_.push_back(std::move(p.first));
         values_.push_back(p.second);
     }
+    targets_ = values_;
 }
 
 void Pedal::set(const std::string& name, double value) {
     for (size_t i = 0; i < names_.size(); i++)
-        if (names_[i] == name) values_[i] = static_cast<float>(value);
+        if (names_[i] == name) values_[i] = targets_[i] = static_cast<float>(value);
+}
+
+void Pedal::glide(const std::string& name, double value) {
+    for (size_t i = 0; i < names_.size(); i++)
+        if (names_[i] == name) {
+            targets_[i] = static_cast<float>(value);
+            gliding_ = gliding_ || targets_[i] != values_[i];
+        }
 }
 
 void Pedal::process(const float* in, float* out, int n) {
+    if (gliding_) {
+        const double k = 1 - std::exp(-n / (0.012 * rate_));
+        gliding_ = false;
+        for (size_t i = 0; i < values_.size(); i++) {
+            if (values_[i] == targets_[i]) continue;
+            values_[i] = static_cast<float>(values_[i] + (targets_[i] - values_[i]) * k);
+            if (std::fabs(targets_[i] - values_[i]) < 1e-6f) values_[i] = targets_[i];
+            gliding_ = gliding_ || values_[i] != targets_[i];
+        }
+    }
     const int on = values_[0] >= 0.5f ? 1 : 0;
     if (on == 0 && mix_ < 1e-4 && !trails()) {
         // Settled into bypass: a straight copy, bit for bit.

@@ -1,23 +1,33 @@
 // The amp as a JUCE AudioProcessor: ampcore's Chain, with the browser's
-// knobs as its parameters.
+// knobs as its parameters and the browser's own UI as its editor.
 //
-// The parameter ids are the browser's knob keys (drive, masterVol, cabMix…)
-// and the labels are the ones on its panel, so a saved setting and a MIDI
-// map mean the same knob in both. For now the editor is JUCE's generic one;
-// the browser's own UI arrives in a WebView next, over a bridge that carries
-// parameters, not audio.
+// Two kinds of setting. The amp's knobs, the tone stack and the bus gains
+// are JUCE parameters — ids, labels and defaults from the browser's panel —
+// so a host can automate them and they save with a session. The cab, the
+// pedalboard and the voicing are structure rather than knobs, and are kept
+// as the JSON the browser's engine.chainSettings() writes, so the two builds
+// describe a sound the same way.
+//
+// Threads: the bridge calls in on the message thread. Anything that has to
+// be rebuilt (a cab, a board) is built there and handed to the audio thread
+// through an atomic pointer; knob turns on pedals go through a lock-free
+// queue; what the audio thread lets go of is freed back on the message
+// thread. The audio thread never allocates, frees or waits.
 
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <array>
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 #include "ampcore/chain.hpp"
 
-class AmpProcessor : public juce::AudioProcessor {
+class AmpProcessor : public juce::AudioProcessor, private juce::Timer {
 public:
     AmpProcessor();
+    ~AmpProcessor() override;
 
     void prepareToPlay(double sampleRate, int maximumBlockSize) override;
     void releaseResources() override;
@@ -46,14 +56,80 @@ public:
 
     juce::AudioProcessorValueTreeState state;
 
+    // ---- the bridge, on the message thread ----------------------------
+
+    /** Everything the chain renders with, in chainSettings() form, pedal
+     *  uids included. `board` is void until a board has been set. */
+    juce::var settings() const;
+    void setKnob(const juce::String& id, double value);
+    void setTone(const juce::var& tone);
+    void setCab(const juce::var& opts);
+    void setBoard(const juce::var& board);
+    void setPedalValue(const juce::String& uid, const juce::String& key, double value);
+    void setPedalOn(const juce::String& uid, bool on);
+    /** The whole override set: {} or void is the stock voicing. */
+    void setVoicing(const juce::var& voicing);
+    void panic() { panic_.store(true); }
+    /** The output's peak since the last call. */
+    float takePeak() { return peak_.exchange(0.0f); }
+
 private:
-    ampcore::ChainSettings settingsNow() const;
+    struct Command {
+        uint32_t gen = 0;  // the board generation a pedal command was aimed at
+        bool isVoicing = false;
+        int lane = 0;
+        size_t index = 0;
+        char name[24] = {};
+        double value = 0;
+        ampcore::Voicing voicing;
+    };
+    struct Trash {
+        ampcore::Convolver* cab = nullptr;
+        ampcore::ChainLanes* lanes = nullptr;
+    };
+    enum class Duck { Open, Closing, Closed, Opening };
+
+    // These three expect settingsLock_ held.
+    ampcore::ChainSettings chainSettings() const;
+    void postCab();
+    void postLanes();
     void pushParameters();
+    void push(const Command& c);
+    void drainCommands();
+    void takeHandoffs(int frames);
+    void applyDuck(float* l, float* r, int n);
+    void retire(Trash t);
+    bool findPedal(const juce::String& uid, int& lane, size_t& index, juce::var& slot) const;
+    void timerCallback() override;
 
     std::unique_ptr<ampcore::Chain> chain_;
+    std::atomic<double> rate_{0};
+
+    // The structural settings, as JSON objects. The lock is for
+    // prepareToPlay, which can run off the message thread; the audio
+    // callback never takes it.
+    mutable std::mutex settingsLock_;
+    juce::var cab_, board_, voicing_;
+
+    juce::AbstractFifo commandFifo_{256};
+    std::array<Command, 256> commands_;
+    juce::AbstractFifo trashFifo_{64};
+    std::array<Trash, 64> trash_;
+    std::atomic<ampcore::Convolver*> nextCab_{nullptr};
+    std::atomic<ampcore::ChainLanes*> nextLanes_{nullptr};
+    uint32_t boardGen_ = 0;  // message thread
+    uint32_t lanesGen_ = 0;  // audio thread
+
+    // The output ducks for a board rebuild as the browser's setBoard() does
+    // (12 ms down, 20 back up), and holds shut for the panic button.
+    Duck duck_ = Duck::Open;
+    double duckGain_ = 1;
+    int heldFor_ = 0;
+    std::atomic<bool> panic_{false};
+    std::atomic<float> peak_{0};
 
     std::atomic<float> *drive_, *bass_, *mid_, *treble_, *bias_, *presence_, *sag_;
-    std::atomic<float> *masterVol_, *gate_, *reverb_, *master_, *cabMix_, *stages_, *stack_;
+    std::atomic<float> *masterVol_, *gateKnob_, *reverb_, *master_, *cabMix_, *stages_, *stack_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AmpProcessor)
 };

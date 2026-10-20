@@ -32,6 +32,11 @@ public:
      *  holds it. Unknown names are ignored, as buildPedals() ignores them. */
     void set(const std::string& name, double value);
 
+    /** The same, arrived at over 12 ms rather than at once — a knob being
+     *  turned, smoothed the way setTargetAtTime smooths it in the browser so
+     *  a MIDI sweep does not zipper. Stepped once per process() call. */
+    void glide(const std::string& name, double value);
+
     /**
      * One block. Knobs are read once per call, as a k-rate AudioParam is
      * read once per quantum, so call it in 128-frame blocks to match the
@@ -64,8 +69,9 @@ protected:
 private:
     const double aMix_;
     bool idleDone_ = false;
+    bool gliding_ = false;
     std::vector<std::string> names_;
-    std::vector<float> values_;
+    std::vector<float> values_, targets_;
 };
 
 }  // namespace ampcore

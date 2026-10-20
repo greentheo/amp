@@ -44,7 +44,11 @@
 
 <header class="bar">
   <div class="brand"><b>Amp</b><span class="tag">valve</span></div>
-  <div class="io">
+  <div class="io native-only">
+    <button id="btn-audio" class="mini" title="Input, output, sample rate and buffer size">Audio settings</button>
+    <span id="audio-state" class="state"></span>
+  </div>
+  <div class="io web-only">
     <button id="btn-input" class="mini">Plug in</button>
     <select id="device" class="dev" hidden></select>
     <span id="in-state" class="state">no input</span>
@@ -57,14 +61,14 @@
   <div class="meters">
     <div class="meter"><i id="meter-fill"></i></div>
     <span id="latency" class="stat">—</span>
-    <select id="buffer-mode" class="dev mini-sel" title="Smallest buffer is the least lag. If you hear crackles, use Safe.">
+    <select id="buffer-mode" class="dev mini-sel web-only" title="Smallest buffer is the least lag. If you hear crackles, use Safe.">
       <option value="0">Buffer: smallest</option>
       <option value="interactive">Buffer: safe</option>
     </select>
-    <button id="btn-lagtest" class="mini" title="Measure the real round trip with a loop">Measure lag</button>
+    <button id="btn-lagtest" class="mini web-only" title="Measure the real round trip with a loop">Measure lag</button>
   </div>
-  <button id="btn-rec" class="mini rec"><span class="dot"></span><span id="rec-label">Record</span></button>
-  <span id="rec-time" class="stat">0:00</span>
+  <button id="btn-rec" class="mini rec web-only"><span class="dot"></span><span id="rec-label">Record</span></button>
+  <span id="rec-time" class="stat web-only">0:00</span>
   <button id="btn-panic" class="mini">Mute</button>
   <button id="btn-midi-jump" class="mini mbtn" title="MIDI"><span id="midi-dot" class="mdot"></span>MIDI</button>
 </header>
@@ -107,14 +111,14 @@
       <div class="knobs" id="cabknobs"></div>
       <div class="cabrow">
         <label class="sel">Speaker<select id="speaker"></select></label>
-        <button class="mini" id="btn-ir">Load an IR&hellip;</button>
+        <button class="mini web-only" id="btn-ir">Load an IR&hellip;</button>
         <input type="file" id="ir-file" accept=".wav,audio/wav" hidden>
         <span class="note" id="ir-note">generated — no asset to download</span>
       </div>
       <canvas id="cabcurve" height="90"></canvas>
     </div>
 
-    <div class="plate">
+    <div class="plate web-only">
       <div class="badge">NO GUITAR?</div>
       <div class="stack">
         <button class="go" id="btn-di">Play the built-in guitar</button>
@@ -129,7 +133,7 @@
     </div>
   </section>
 
-  <section class="row">
+  <section class="row web-only">
     <div class="plate wide">
       <div class="badge">CALIBRATION</div>
       <div class="stack">
@@ -168,7 +172,7 @@
     </div>
   </section>
 
-  <section class="row">
+  <section class="row web-only">
     <div class="plate wide">
       <div class="badge">RESPONSE</div>
       <canvas id="scope" height="130"></canvas>

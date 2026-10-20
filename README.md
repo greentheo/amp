@@ -239,8 +239,24 @@ open native/app/build/Amp_artefacts/Release/Standalone/Amp.app
 JUCE's standalone starts with the input muted, in case it is a microphone
 next to a speaker. Open its settings from the banner, pick the guitar's input
 and the output, untick the mute, and choose the smallest buffer that plays
-without crackling. For now the knobs are JUCE's generic sliders; the
-browser's own panel moves into a WebView next.
+without crackling.
+
+The app's panel is this page, in a WebView. Finding itself inside the app,
+it drives the native engine (`js/audio/native.js`) instead of Web Audio, and
+hides what only a browser does: device pickers, the recorder, the lag test
+and calibration. Knobs and the tone stack are JUCE parameters, so they save
+with the app and can be automated in a host later; the cab, the pedalboard
+and the voicing travel as the same JSON as `engine.chainSettings()`.
+
+Two settings help while working on it. `AMP_WEB_ROOT` serves the page from
+a checkout instead of the copy inside the app, so an edit needs a reload,
+not a rebuild. `AMP_LOG` logs every message across the bridge. Page errors
+always land in `~/Library/Logs/Amp/amp.log`, since a release build's WebView
+has no inspector:
+
+```
+open --env AMP_WEB_ROOT="$PWD" --env AMP_LOG=1 native/app/build/Amp_artefacts/Release/Standalone/Amp.app
+```
 
 ## The engine socket
 

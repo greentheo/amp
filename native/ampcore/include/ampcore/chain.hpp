@@ -7,6 +7,7 @@
 // so one file describes the same sound to both builds.
 
 #pragma once
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@
 namespace ampcore {
 
 struct BoardSlot {
+    std::string uid;
     std::string type;
     bool on = false;
     std::vector<std::pair<std::string, double>> values;
@@ -37,6 +39,14 @@ struct ChainSettings {
 
     /** From engine.chainSettings()'s JSON. Absent fields keep the defaults. */
     static ChainSettings fromJson(const Json& j);
+};
+
+/** The two pedal lanes, either side of the amp. */
+struct ChainLanes {
+    std::vector<std::unique_ptr<Pedal>> pre, post;
+    /** Which version of the board these were built from: the host's tag,
+     *  for knowing whether a knob turn was meant for these pedals. */
+    uint32_t generation = 0;
 };
 
 class Chain {
@@ -64,6 +74,25 @@ public:
     /** The tone stack switches at once, as a posted coefficient set does. */
     void setTone(const std::string& stack, double treble, double mid, double bass);
 
+    /**
+     * The parts that are rebuilt rather than adjusted: a new cab, or a board
+     * that gained, lost or reordered pedals. Build them off the audio thread,
+     * hand them over with a swap from the audio thread, and free what the
+     * swap returns off the audio thread too.
+     */
+    static std::unique_ptr<Convolver> buildCab(double rate, const CabOpts& cab);
+    static std::unique_ptr<ChainLanes> buildLanes(double rate, const ChainSettings& s);
+    std::unique_ptr<Convolver> swapCab(std::unique_ptr<Convolver> next);
+    std::unique_ptr<ChainLanes> swapLanes(std::unique_ptr<ChainLanes> next);
+
+    /**
+     * Turn a pedal's knob, gliding over 12 ms as setPedalValue() does in the
+     * browser, or stomp it ("on", at once). Lane 0 is before the amp, 1 after;
+     * the index counts the pedals the lane built, in board order.
+     */
+    void setPedal(int lane, size_t index, const std::string& name, double value);
+    void setVoicing(const Voicing& v) { amp_.setVoicing(v); }
+
 private:
     static constexpr int MAX_BLOCK = 128;
 
@@ -76,10 +105,10 @@ private:
     std::string stack_;
     double treble_, mid_, bass_;
     Amp amp_;
-    Convolver cab_;
+    std::unique_ptr<Convolver> cab_;
     Reverb verb_;
     OutLimiter limiter_;
-    std::vector<std::unique_ptr<Pedal>> pre_, post_;
+    std::unique_ptr<ChainLanes> lanes_;
     float wet_, dry_, send_, master_;  // GainNodes hold float
     float a_[MAX_BLOCK], b_[MAX_BLOCK], c_[MAX_BLOCK], vl_[MAX_BLOCK], vr_[MAX_BLOCK];
 };

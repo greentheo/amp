@@ -2,6 +2,7 @@
 // the thing is actually working.
 
 import { Engine } from './audio/engine.js';
+import { NativeEngine, isNative, forwardConsole } from './audio/native.js';
 import { STACKS } from './audio/tonestack.js';
 import { SPEAKERS } from './audio/cab.js';
 import { encodeWav, encodeWavFloat } from './audio/wav.js';
@@ -12,7 +13,13 @@ import { initBoard, loadBoard } from './ui/board.js';
 import { Midi, sourceText } from './midi.js';
 
 const $ = (id) => document.getElementById(id);
-const engine = new Engine();
+// Inside the native app the same page drives the app's engine instead of
+// Web Audio; see js/audio/native.js.
+const engine = isNative() ? new NativeEngine() : new Engine();
+if (engine.native) {
+  document.documentElement.classList.add('native');
+  forwardConsole(engine);
+}
 
 /** min, max, default, and how to show it. `curve: 'log'` for anything the ear
  *  hears logarithmically, which is most of it. */
@@ -298,7 +305,8 @@ let mapping = false;
 function wireBoard() {
   // A saved board comes back with its pedal uids intact, which is what keeps
   // MIDI bindings to pedals pointing at the right pedal after a reload.
-  const saved = loadBoard();
+  // In the app the board is the app's, already fetched by connect().
+  const saved = engine.native ? null : loadBoard();
   if (saved) engine.board = saved;
   const host = $('pedalboard');
   initBoard({
@@ -474,7 +482,9 @@ function wireMidi() {
   // looks exactly like a working setup that has broken.
   midi.autoEnable().catch(() => {});
   if (!midi.available) {
-    $('midi-status').textContent = 'this browser has no Web MIDI (Chrome and Edge do; Safari does not yet)';
+    $('midi-status').textContent = engine.native
+      ? 'MIDI in the app comes next, through CoreMIDI'
+      : 'this browser has no Web MIDI (Chrome and Edge do; Safari does not yet)';
     $('btn-midi').disabled = true;
   }
   renderMaps();
@@ -572,7 +582,9 @@ function updateLatency() {
     + (l.input ? '' : '\n(input latency not reported by this browser, or no input plugged in)')
     + (mismatch ? `\n⚠ input runs at ${inRate / 1000} kHz, the amp at ${engine.ctx.sampleRate / 1000} kHz — Re-plug to match` : '')
     + (g == null ? '\nglitch count: not reported by this browser' : `\nglitches since opening: ${g}`)
-    + '\nThis is what the browser claims. Measure lag tests it for real.';
+    + (engine.native
+      ? '\nThis is what the device driver claims. The cable loop has always measured more.'
+      : '\nThis is what the browser claims. Measure lag tests it for real.');
 }
 
 function wireOutput() {
@@ -1006,8 +1018,12 @@ async function begin() {
   $('gate').classList.add('hidden');
   await engine.init();
   await engine.resume();
-  pushAll();
-  engine.set('stages', +$('stages').value);
+  // The app holds its own settings and the panel was set from them; pushing
+  // the panel back would only ever risk overwriting them.
+  if (!engine.native) {
+    pushAll();
+    engine.set('stages', +$('stages').value);
+  }
   drawCab();
 
   // If the remembered output had gone by power-on, the engine fell back to
@@ -1020,21 +1036,51 @@ async function begin() {
   requestAnimationFrame(frame);
 }
 
+/** The app's settings onto the panel, without sending any of them back. */
+function applyNative(s) {
+  if (!s) return;
+  engine.quietly(() => {
+    const knob = { ...s.amp, ...s.tone, ...(s.cab || {}), cabMix: s.cabMix, reverb: s.reverb, master: s.master };
+    for (const k of Object.keys(KNOB_BY_KEY)) if (typeof knob[k] === 'number') setKnob(k, knob[k]);
+    if (s.tone?.stack) setSelect('stack', s.tone.stack);
+    if (s.amp?.stages) setSelect('stages', s.amp.stages);
+    if (s.cab?.speaker) setSelect('speaker', s.cab.speaker);
+  });
+}
+
+function showAudio(a) {
+  $('audio-state').textContent = a && a.rate
+    ? `${a.input || 'no input'} \u2192 ${a.output || 'no output'} \u00b7 ${a.buffer} frames`
+    : 'no audio device';
+  updateLatency();
+}
+
+// In the app there is nothing to unlock: the audio is already running, so
+// there is no power-on gate, and the browser's device, recording and
+// calibration controls give way to the app's own audio settings.
+const nativeState = engine.native ? engine.connect() : null;
 buildKnobs();
 wireBoard();
 wireSelects();
-wireDI();
-wireLatency();
-wireLagTest();
-wireInput();
-wireOutput();
-wireRecorder();
-wireCalibration();
+if (!engine.native) {
+  wireDI();
+  wireLatency();
+  wireLagTest();
+  wireInput();
+  wireOutput();
+  wireRecorder();
+  wireCalibration();
+}
 wireMidi();
-$('btn-begin').addEventListener('click', begin, { once: true });
-$('btn-panic').addEventListener('click', () => {
-  if (!engine.ctx) return;
-  engine.master.gain.setTargetAtTime(0, engine.ctx.currentTime, 0.01);
-  setTimeout(() => engine.master.gain.setTargetAtTime(values.master, engine.ctx.currentTime, 0.05), 400);
-});
+$('btn-panic').addEventListener('click', () => engine.panic(values.master));
+if (engine.native) {
+  applyNative(nativeState);
+  $('btn-audio').addEventListener('click', () => engine.showAudioSettings());
+  engine.onAudio = showAudio;
+  engine.onState = applyNative;
+  await begin();
+  showAudio(engine.audio);
+} else {
+  $('btn-begin').addEventListener('click', begin, { once: true });
+}
 addEventListener('resize', () => { drawCab(); });

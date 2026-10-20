@@ -741,6 +741,13 @@ export class Engine {
     return peak;
   }
 
+  /** Mute for a moment, then come back to `master`. */
+  panic(master) {
+    if (!this.ctx) return;
+    this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.01);
+    setTimeout(() => this.master.gain.setTargetAtTime(master, this.ctx.currentTime, 0.05), 400);
+  }
+
   async resume() {
     if (this.ctx && this.ctx.state !== 'running') await this.ctx.resume();
   }

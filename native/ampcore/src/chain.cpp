@@ -14,6 +14,7 @@ std::vector<BoardSlot> lane(const Json* list) {
     if (!list || list->type != Json::Array) return out;
     for (const Json& p : list->a) {
         BoardSlot slot;
+        slot.uid = p.str("uid", "");
         slot.type = p.str("type", "");
         slot.on = p.truthy("on");
         if (const Json* vals = p.get("values"))
@@ -108,11 +109,10 @@ Chain::Chain(double rate, const ChainSettings& s)
       masterNow_(s.master), masterTo_(s.master),
       stack_(s.stack), treble_(s.treble), mid_(s.mid), bass_(s.bass),
       amp_(rate, s.voicing),
-      cab_(renderCab(rate, s.cab)),
+      cab_(buildCab(rate, s.cab)),
       verb_(springIR(rate), rate, true),
       limiter_(rate),
-      pre_(build(s.pre, rate)),
-      post_(build(s.post, rate)),
+      lanes_(buildLanes(rate, s)),
       wet_(asParam(s.cabMix)),
       dry_(asParam(1 - s.cabMix)),
       send_(asParam(s.reverb)),
@@ -126,6 +126,34 @@ Chain::Chain(double rate, const ChainSettings& s)
     params_.stages = asParam(s.amp.stages);
     ampTo_ = params_;
     amp_.setTone(coeffs(s.stack, s.treble, s.mid, s.bass, rate * Amp::OS));
+}
+
+std::unique_ptr<Convolver> Chain::buildCab(double rate, const CabOpts& cab) {
+    return std::make_unique<Convolver>(renderCab(rate, cab));
+}
+
+std::unique_ptr<ChainLanes> Chain::buildLanes(double rate, const ChainSettings& s) {
+    auto lanes = std::make_unique<ChainLanes>();
+    lanes->pre = build(s.pre, rate);
+    lanes->post = build(s.post, rate);
+    return lanes;
+}
+
+std::unique_ptr<Convolver> Chain::swapCab(std::unique_ptr<Convolver> next) {
+    std::swap(cab_, next);
+    return next;
+}
+
+std::unique_ptr<ChainLanes> Chain::swapLanes(std::unique_ptr<ChainLanes> next) {
+    std::swap(lanes_, next);
+    return next;
+}
+
+void Chain::setPedal(int lane, size_t index, const std::string& name, double value) {
+    auto& list = lane == 0 ? lanes_->pre : lanes_->post;
+    if (index >= list.size()) return;
+    if (name == "on") list[index]->set(name, value);
+    else list[index]->glide(name, value);
 }
 
 void Chain::setAmp(const AmpParams& t) {
@@ -190,9 +218,9 @@ void Chain::process(const float* in, float* outL, float* outR, int n) {
         glide(m);
         float* a = a_;
         std::copy(in + at, in + at + m, a);
-        for (auto& p : pre_) p->process(a, a, m);
+        for (auto& p : lanes_->pre) p->process(a, a, m);
         amp_.process(a, b_, m, params_);
-        cab_.process(b_, c_, m);
+        cab_->process(b_, c_, m);
         // Two GainNodes into one summing junction: each output is a float
         // buffer before the sum, so each product is rounded on its own.
         for (int i = 0; i < m; i++) {
@@ -200,7 +228,7 @@ void Chain::process(const float* in, float* outL, float* outR, int n) {
             const float d = b_[i] * dry_;
             a[i] = w + d;
         }
-        for (auto& p : post_) p->process(a, a, m);
+        for (auto& p : lanes_->post) p->process(a, a, m);
         for (int i = 0; i < m; i++) b_[i] = a[i] * send_;
         verb_.process(b_, vl_, vr_, m);
         // The dry path upmixed to both sides, the reverb's two channels on
