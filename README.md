@@ -223,3 +223,23 @@ node tools/test-tonestack.mjs
   Stack", Proc. DAFx-06 — the tone stack circuit analysis.
 * `faustlibraries/tonestacks.lib`, from Guitarix — the same analysis in code,
   and the schematic component values.
+
+## License
+
+Copyright © 2026 Theodore Van Rooy.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+without any warranty; without even the implied warranty of merchantability or
+fitness for a particular purpose. See [LICENSE](LICENSE) for the full text.
+
+The Affero clause matters for a web app in a way the plain GPL's does not: if
+you run a modified version of this on a server for other people to use, you
+owe them its source too. And it is the licence the native build needs, since
+that build uses JUCE 8 under its AGPLv3 option.
+
+Third-party material it uses keeps its own terms: the FreePats guitar samples
+fetched by `tools/fetch-di.mjs` are CC0, and `tools/bias-render.py` drives
+pedalboard, which is GPLv3.
