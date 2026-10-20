@@ -13,13 +13,21 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-add_library(ampcore STATIC src/tonestack.cpp src/amp.cpp)
+add_library(ampcore STATIC src/tonestack.cpp src/amp.cpp src/cab.cpp)
 target_include_directories(ampcore PUBLIC include)
 # No -ffast-math. It licenses the compiler to reassociate floating point,
 # and the null test against the browser build depends on the arithmetic
 # being done in the order it is written.
+# And no FMA contraction either. Clang will otherwise fuse a*b + c into one
+# instruction with one rounding where JavaScript, which forbids contraction,
+# rounds twice — a difference in the last bit that the null test would see.
+target_compile_options(ampcore PUBLIC -ffp-contract=off)
 target_compile_options(ampcore PRIVATE -Wall -Wextra -O2)
 
 add_executable(ampcore-render tools/render.cpp)
 target_link_libraries(ampcore-render PRIVATE ampcore)
 target_compile_options(ampcore-render PRIVATE -O2)
+
+add_executable(ampcore-test tools/test.cpp)
+target_link_libraries(ampcore-test PRIVATE ampcore)
+target_compile_options(ampcore-test PRIVATE -O2)
