@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "ampcore/biquad.hpp"
+#include "ampcore/jsmath.hpp"
 
 namespace ampcore {
 
@@ -22,19 +23,6 @@ const std::map<std::string, double> CAB_SHAPE = {
     {"topQ", 0.56}, {"top2", 2.5}, {"top2Q", 1.5}, {"tiltHz", 931},
 };
 
-/** Math.round: nearest integer, halves toward +infinity. */
-double jsRound(double x) {
-    double r = std::floor(x);
-    if (x - r >= 0.5) r += 1;
-    return r;
-}
-
-/** ToInt32, as JavaScript's bitwise operators apply it. */
-uint32_t toUint32Bits(double x) {
-    const double m = std::fmod(std::trunc(x), 4294967296.0);
-    return static_cast<uint32_t>(static_cast<int64_t>(m < 0 ? m + 4294967296.0 : m));
-}
-
 /** seedOf() in cab.js: FNV-style over the speaker id, then the sorted
  *  numeric options rounded to thousandths. std::map iterates in the same
  *  sorted order as Object.keys().sort() for these ASCII keys. */
@@ -45,17 +33,6 @@ uint32_t seedOf(const std::map<std::string, double>& spec, const std::string& sp
     for (const auto& kv : spec) mix(toUint32Bits(jsRound(kv.second * 1000)));
     return h;
 }
-
-/** mulberry32, with JavaScript's 32-bit integer semantics. */
-struct Mulberry32 {
-    uint32_t a;
-    double next() {
-        a += 0x6d2b79f5u;
-        uint32_t t = (a ^ (a >> 15)) * (1u | a);
-        t = (t + ((t ^ (t >> 7)) * (61u | t))) ^ t;
-        return static_cast<double>(t ^ (t >> 14)) / 4294967296.0;
-    }
-};
 
 }  // namespace
 

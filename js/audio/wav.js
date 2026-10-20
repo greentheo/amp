@@ -40,13 +40,14 @@ export function encodeWav(buffer) {
 }
 
 /**
- * 32-bit float WAV, mono, from channel 0. For reference renders: the null
- * test against the native build compares to around -150 dB, and 16-bit
- * quantisation would put a floor at -96 under everything.
+ * 32-bit float WAV, mono, from one channel (the first unless told). For
+ * reference renders: the null test against the native build compares to
+ * around -150 dB, and 16-bit quantisation would put a floor at -96 under
+ * everything.
  * @returns {ArrayBuffer}
  */
-export function encodeWavFloat(buffer) {
-  const d = buffer.getChannelData(0);
+export function encodeWavFloat(buffer, channel = 0) {
+  const d = buffer.getChannelData(channel);
   const rate = buffer.sampleRate;
   const bytes = 44 + d.length * 4;
   const view = new DataView(new ArrayBuffer(bytes));

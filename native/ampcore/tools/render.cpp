@@ -1,20 +1,25 @@
 // ampcore-render: run a WAV through the native amp.
 //
+//   ampcore-render in.wav out.wav --chain settings.json
 //   ampcore-render in.wav out.wav --drive 0.55 --stages 3 --stack jcm800 ...
 //   ampcore-render --dump-tone jcm800 0.6 0.5 0.5 192000
 //
-// For now the amp alone — gate, oversampled preamp, tone stack, power amp —
-// which is exactly what the browser's amp-processor worklet is, so the two
-// can be null-tested against each other sample for sample. The cab, the
-// reverb, the limiter and the pedals join the chain as they are ported.
+// --chain renders the whole path — pedals, amp, cab, reverb, limiter — from
+// the settings the browser's engine.chainSettings() writes, and mixes it to
+// mono the way an OfflineAudioContext with one channel does, so it lines up
+// with renderStimulus() sample for sample. Without it, the amp alone: what
+// the browser's amp-processor worklet is.
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <map>
 #include <string>
 
 #include "ampcore/amp.hpp"
+#include "ampcore/chain.hpp"
 #include "ampcore/tonestack.hpp"
 #include "ampcore/wav.hpp"
 
@@ -35,7 +40,8 @@ int main(int argc, char** argv) {
     }
     if (argc < 3) {
         std::fprintf(stderr,
-            "usage: ampcore-render in.wav out.wav [--drive x] [--bias x] [--presence x] [--sag x]\n"
+            "usage: ampcore-render in.wav out.wav --chain settings.json\n"
+            "       ampcore-render in.wav out.wav [--drive x] [--bias x] [--presence x] [--sag x]\n"
             "       [--master-vol x] [--gate x] [--stages n] [--stack id] [--bass x] [--mid x]\n"
             "       [--treble x] [--no-tone] [--tail seconds]\n");
         return 2;
@@ -51,6 +57,29 @@ int main(int argc, char** argv) {
     auto num = [&](const char* k, double d) { return o.count(k) ? std::atof(o[k].c_str()) : d; };
 
     Wav in = readWav(inPath);
+
+    if (o.count("chain")) {
+        std::ifstream f(o["chain"]);
+        if (!f) { std::fprintf(stderr, "cannot open %s\n", o["chain"].c_str()); return 1; }
+        std::stringstream text;
+        text << f.rdbuf();
+        Chain chain(in.rate, ChainSettings::fromJson(Json::parse(text.str())));
+        std::vector<float> x(in.mono);
+        x.resize(x.size() + static_cast<size_t>(num("tail", 2.0) * in.rate + 0.5), 0.0f);
+        std::vector<float> y(x.size());
+        float l[128], r[128];
+        for (size_t at = 0; at < x.size(); at += 128) {
+            const int n = static_cast<int>(std::min<size_t>(128, x.size() - at));
+            chain.process(&x[at], l, r, n);
+            // Stereo into a one-channel destination: Chromium's speaker
+            // down-mix, 0.5 * L summed with 0.5 * R.
+            for (int i = 0; i < n; i++) y[at + i] = 0.5f * l[i] + 0.5f * r[i];
+        }
+        writeWavFloat(outPath, y, in.rate);
+        std::printf("%s  %zu frames @ %.0f Hz, full chain\n", outPath.c_str(), y.size(), in.rate);
+        return 0;
+    }
+
     AmpParams p;
     p.drive = asParam(num("drive", 0.55));
     p.bias = asParam(num("bias", 0));

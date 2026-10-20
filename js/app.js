@@ -258,6 +258,27 @@ window.amp = {
     return res.text();
   },
 
+  /**
+   * The full chain — pedals, amp, cab, reverb, limiter — rendered through
+   * the stimulus the way renderStimulus() does it, saved with the settings
+   * it was rendered from, for ampcore-render --chain to null against.
+   */
+  async renderChain(name) {
+    if (engine.irData) throw new Error('a loaded IR file has no native equivalent yet: use the generated cab');
+    const file = name.replace(/[^A-Za-z0-9._-]/g, '-');
+    const settings = engine.chainSettings();
+    const out = await engine.renderStimulus(await amp._stimulus());
+    const parts = [
+      ['wav', new Blob([encodeWavFloat(out)], { type: 'audio/wav' })],
+      ['json', JSON.stringify(settings, null, 2)],
+    ];
+    for (const [ext, body] of parts) {
+      const res = await fetch(`calibration/${file}.${ext}`, { method: 'PUT', body });
+      if (!res.ok) throw new Error(`save failed: ${res.status}`);
+    }
+    return `${file}.wav and ${file}.json`;
+  },
+
   _cached: null,
   async _stimulus() {
     if (!amp._cached) {

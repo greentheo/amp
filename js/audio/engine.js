@@ -275,6 +275,33 @@ export class Engine {
   springIR() { return springIR(this.ctx); }
 
   /**
+   * Everything renderStimulus() renders with, as plain data: what each
+   * control was asked for (preferring that over what a live AudioParam
+   * holds mid-ramp — see `requested`), the tone stack, the voicing, the cab
+   * and the board. It is also the file the native build reads
+   * (ampcore-render --chain), so the two render the same settings by
+   * construction rather than by keeping two lists in step. `cab` is null
+   * when a loaded IR file is standing in for the generated cab.
+   */
+  chainSettings() {
+    const want = (k, node) => (k in this.requested ? this.requested[k] : node.gain.value);
+    const amp = {};
+    for (const [name, param] of this.amp.parameters) {
+      amp[name] = name in this.requested ? this.requested[name] : param.value;
+    }
+    return {
+      amp,
+      tone: { ...this.tone },
+      voicing: JSON.parse(JSON.stringify(this.voicing)),
+      cab: this.irData ? null : { ...this.cabOpts },
+      cabMix: 'cabMix' in this.requested ? this.requested.cabMix : this.cabWet.gain.value,
+      reverb: want('reverb', this.verbSend),
+      master: want('master', this.master),
+      board: JSON.parse(JSON.stringify(this.board)),
+    };
+  }
+
+  /**
    * Render a stimulus through the amp offline, at the settings you are
    * hearing right now.
    *
@@ -321,28 +348,23 @@ export class Engine {
     // signal through bit for bit, so calibration renders are unaffected
     // unless a pedal is actually on — opts.pedals:false leaves it out
     // entirely when that matters.
-    if (opts.pedals !== false) this.buildPedals(off, g, this.board);
+    const s = this.chainSettings();
+    if (opts.pedals !== false) this.buildPedals(off, g, s.board);
 
-    // Carry every setting across, preferring what was asked for over what
-    // the live AudioParam currently holds — see `requested`.
-    for (const [name, param] of this.amp.parameters) {
+    for (const [name, value] of Object.entries(s.amp)) {
       const target = g.amp.parameters.get(name);
-      if (!target) continue;
-      target.value = name in this.requested ? this.requested[name] : param.value;
+      if (target) target.value = value;
     }
-    const want = (k, node, dflt) =>
-      (k in this.requested ? this.requested[k] : (node ? node.gain.value : dflt));
-    g.master.gain.value = want('master', this.master);
-    g.verbSend.gain.value = want('reverb', this.verbSend);
-    const mix = 'cabMix' in this.requested ? this.requested.cabMix : this.cabWet.gain.value;
-    g.cabWet.gain.value = mix;
-    g.cabDry.gain.value = 1 - mix;
+    g.master.gain.value = s.master;
+    g.verbSend.gain.value = s.reverb;
+    g.cabWet.gain.value = s.cabMix;
+    g.cabDry.gain.value = 1 - s.cabMix;
 
-    const { stack, treble, mid, bass } = this.tone;
+    const { stack, treble, mid, bass } = s.tone;
     g.amp.port.postMessage({ type: 'tone', k: coeffs(stack, treble, mid, bass, rate * 4) });
     // The voicing has to travel too, or a fit would render the stock amp.
-    if (Object.keys(this.voicing).length) {
-      g.amp.port.postMessage({ type: 'voicing', v: { ...this.voicing } });
+    if (Object.keys(s.voicing).length) {
+      g.amp.port.postMessage({ type: 'voicing', v: s.voicing });
     }
 
     // The cab has to be built for THIS context, not copied from the live one.
@@ -355,7 +377,7 @@ export class Engine {
     if (this.irData) {
       g.cab.buffer = await off.decodeAudioData(this.irData.slice(0));
     } else {
-      g.cab.buffer = await renderCab(off, this.cabOpts);
+      g.cab.buffer = await renderCab(off, s.cab);
     }
 
     const node = off.createBufferSource();
@@ -733,7 +755,7 @@ export class Engine {
  * off?" unanswerable, because the answer was always yes. Same fix, same
  * reason, as the cab's cone noise.
  */
-function springIR(ctx) {
+export function springIR(ctx) {
   const rate = ctx.sampleRate;
   const len = Math.round(rate * 1.4);
   const buf = ctx.createBuffer(2, len, rate);

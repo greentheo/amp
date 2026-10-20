@@ -12,6 +12,7 @@
 #pragma once
 #include <array>
 
+#include "ampcore/resampler.hpp"
 #include "ampcore/tonestack.hpp"
 
 namespace ampcore {
@@ -56,8 +57,7 @@ struct AmpParams {
 
 class Amp {
 public:
-    static constexpr int OS = 4;
-    static constexpr int TAPS = 16 * OS;
+    static constexpr int OS = Resampler::OS;
 
     explicit Amp(double sampleRate, const Voicing& v = Voicing());
 
@@ -85,16 +85,11 @@ private:
 
     void buildStages();
     void tuneOutput();
-    void upsample(double x, float* out);
-    double downsample(const float* buf);
 
     double rate_, hi_;
     Voicing v_;
     std::array<Stage, 4> stages_;
-    std::array<float, TAPS> h_;
-    std::array<std::array<float, TAPS / OS>, OS> phases_;
-    std::array<float, TAPS / OS> upLine_{};
-    std::array<float, TAPS> downLine_{};
+    Resampler rs_;
 
     ToneCoeffs tone_{};
     bool hasTone_ = false;

@@ -190,6 +190,43 @@ arrived while the new context was being built never drained: the safe buffer
 measured 73.4 ms. Reopening the input from cold after a rebuild brought the
 same path to 30.8.
 
+## The native build
+
+`native/ampcore` is the whole signal path in plain C++17, with no framework
+in it: pedals, amp, cab, spring reverb, limiter. A JUCE app will wrap it for
+the latency above, and the browser can later run the same code compiled to
+WebAssembly, so there is one implementation rather than two that drift.
+
+The test that says the port is right is a null test against the browser,
+not a listening test: the same input through both builds, subtracted sample
+by sample. That means following the JavaScript's rounding exactly — state in
+double, Float32Array storage as float, every AudioParam rounded to float32,
+no `-ffast-math` and no fused multiply-add — and porting Chromium's own
+arithmetic where the browser leans on a built-in node: BiquadFilterNode's
+coefficient formulas for the cab, ConvolverNode's normalisation for the
+reverb, the speaker down-mix at the end.
+
+| part | against the browser |
+|---|---|
+| tone stack | every coefficient identical |
+| amp (gate, 4x preamp, power amp) | −283 to −288 dB, 91–96% of samples bit-identical |
+| all ten pedals, footswitch transitions included | bit-identical |
+| cab impulse response | −141 to −148 dB |
+| spring reverb impulse response | bit-identical |
+| convolution: cab / reverb | −139 / −128 dB |
+| full chain, four settings | −130 to −138 dB |
+
+Where it is not bit-identical, the residual is Chrome handing its biquads,
+its FFTs and one sum of squares to Accelerate, whose internal order cannot be
+reproduced. All of it sits more than 100 dB below the signal, which is the
+pass mark. To re-check after a change, render references in the page with
+`await amp.renderChain('chain-name')` and run:
+
+```
+(cd native/ampcore && mkdir -p build && cd build && cmake .. && cmake --build .)
+node tools/native-null.mjs chain
+```
+
 ## The engine socket
 
 The amp block sits between `preIn` and `preOut` in `engine.js` and nothing
