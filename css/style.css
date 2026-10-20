@@ -198,3 +198,17 @@ body.mapping [data-ctl].armed{outline:2px solid var(--accent);animation:arm 1s e
   font:10px ui-monospace,monospace;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
 .outsel select{padding:4px 6px;font-size:12px}
 .outsel select:disabled{opacity:.5}
+.mini-sel{padding:4px 6px;font-size:11.5px;border-radius:999px}
+.stat.warnlat{color:var(--accent)}
+
+/* ---------- lag test ---------- */
+.lagcard{max-width:540px;text-align:left}
+.lagcard h2{margin:0 0 6px;letter-spacing:.08em}
+.lagstep{margin:6px 0 4px;color:var(--ink)}
+.lagways{margin:0 0 16px;padding-left:18px;color:var(--dim);font-size:13px;line-height:1.55}
+.lagways li{margin-bottom:6px}
+.lagrow{display:flex;gap:10px;align-items:center}
+.lagres{margin-top:16px;font-size:13px;color:var(--dim);line-height:1.6;min-height:1em}
+.lagres .lagbig{font:600 34px ui-monospace,monospace;color:var(--accent);margin-bottom:2px}
+.lagres .lagverdict{margin-top:8px;color:var(--ink)}
+.lagres .bad,.lagres.bad{color:var(--hot)}

@@ -41,6 +41,22 @@ export class Engine {
     this.pedalNodes = new Map();       // uid -> live AudioWorkletNode
     // Where the amp plays. '' is the system default.
     this.sinkId = '';
+    // How the context is opened. These need a new context to change, which
+    // restart() handles without losing anything else.
+    //
+    //   latencyHint 0 asks Chrome for its smallest buffer. 'interactive' is
+    //   NOT that: measured on a MacBook it gave 256 frames and 37.8 ms round
+    //   trip, where 0 gave 128 frames and 26.9 ms — the output side's
+    //   buffering scales with the graph's, so halving one shortens both.
+    //   The cost is less slack, so 'safe' stays one click away.
+    //
+    //   sampleRate null lets the browser choose, which is the default output
+    //   device's rate. If the input runs at another rate Chrome resamples on
+    //   the way in, and that costs milliseconds — about 8 measured — so
+    //   plugging in matches the context to the input.
+    this.opts = { latencyHint: 0, sampleRate: null };
+    this.diOn = false;
+    this.diShape = 'riff';
   }
 
   /**
@@ -214,7 +230,10 @@ export class Engine {
     if (this.ctx) return;
     // 'interactive' is the whole difference between an amp you can play and a
     // thing that answers you a fifth of a second later.
-    const ctx = new AudioContext({ latencyHint: 'interactive' });
+    const ctx = new AudioContext({
+      latencyHint: this.opts.latencyHint,
+      ...(this.opts.sampleRate ? { sampleRate: this.opts.sampleRate } : {}),
+    });
     this.ctx = ctx;
     // An output chosen before power-on. If that device has gone since, fall
     // back to the default rather than refusing to start.
@@ -242,7 +261,13 @@ export class Engine {
     this.di.connect(this.diGain).connect(this.fxPreIn);
     this.di.start();
 
-    await this.setCab({});
+    // A loaded IR survives a restart: decode it again for the new context
+    // rather than falling back to the generated cab.
+    if (this.irData) {
+      this.cab.buffer = await this.ctx.decodeAudioData(this.irData.slice(0));
+    } else {
+      await this.setCab({});
+    }
     this.setTone(this.tone);
   }
 
@@ -399,6 +424,8 @@ export class Engine {
   }
 
   setDI(on, shape) {
+    this.diOn = !!on;
+    if (shape) this.diShape = shape;
     if (shape && this.ctx) {
       const next = this.ctx.createBufferSource();
       next.buffer = makeDI(this.ctx, shape);
@@ -422,10 +449,191 @@ export class Engine {
         channelCount: 1, ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       },
     });
-    if (this.src) this.src.disconnect();
+    this.connectInput();
+    return this.stream.getAudioTracks()[0].label;
+  }
+
+  connectInput() {
+    if (this.src) { try { this.src.disconnect(); } catch {} }
+    this.src = null;
+    if (!this.stream || !this.ctx) return;
     this.src = this.ctx.createMediaStreamSource(this.stream);
     this.src.connect(this.fxPreIn);
-    return this.stream.getAudioTracks()[0].label;
+  }
+
+  /**
+   * Measure the real round trip: play chirps out of the output, hear them
+   * come back on the input, and time them on the context's own clock.
+   *
+   * Needs a physical loop — an output cabled to an input, or a speaker a
+   * microphone can hear. Everything the browser claims about latency is
+   * bypassed: this is the delay a note actually suffers between the input
+   * jack and the output, which is the one you feel.
+   *
+   * The chirp is found by matched filtering rather than by a level
+   * threshold, so it is timed to a fraction of a sample even through a
+   * speaker in a noisy room, and a weak or missing loop is reported as such
+   * instead of producing a confident wrong number.
+   *
+   * @param {object} [o] testDelay: seconds — for validating the method, feed
+   *   the chirps back through an in-graph delay instead of the hardware
+   */
+  async measureLag(o = {}) {
+    if (!this.ctx) throw new Error('Power the amp on first.');
+    if (!this.src && o.testDelay == null) throw new Error('Plug in an input first — the test listens on it.');
+    const ctx = this.ctx, rate = ctx.sampleRate;
+    await ctx.audioWorklet.addModule('js/audio/tap-worklet.js');
+
+    // 12 ms log chirp, 600 Hz to 9 kHz, Hann windowed: short, broadband, and
+    // inside what a laptop speaker can actually reproduce.
+    const tl = Math.round(0.012 * rate);
+    const tpl = new Float32Array(tl);
+    const f0 = 600, f1 = 9000, T = tl / rate, k = Math.log(f1 / f0);
+    for (let i = 0; i < tl; i++) {
+      const t = i / rate;
+      tpl[i] = Math.sin(((2 * Math.PI * f0 * T) / k) * (Math.exp((t / T) * k) - 1))
+        * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (tl - 1)));
+    }
+
+    const chirps = o.chirps || 5;
+    const gap = 0.4;                 // wide enough that even Bluetooth's 200 ms cannot alias
+    const lead = 0.2;
+    const total = lead + chirps * gap + 0.5;
+    const sig = ctx.createBuffer(1, Math.round(total * rate), rate);
+    const sd = sig.getChannelData(0);
+    const offs = [];
+    for (let c = 0; c < chirps; c++) {
+      const at = Math.round((lead + c * gap) * rate);
+      offs.push(at);
+      for (let i = 0; i < tl; i++) sd[at + i] = tpl[i] * (o.level || 0.3);
+    }
+
+    // The amp has to be silent, or the chirp goes out, comes back in, goes
+    // through the amp and out again, and the loop measures itself.
+    const keep = 'master' in this.requested ? this.requested.master : this.master.gain.value;
+    this.master.gain.setTargetAtTime(0, ctx.currentTime, 0.004);
+
+    const tap = new AudioWorkletNode(ctx, 'tap-recorder', {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+      processorOptions: { frames: Math.round((total + 0.3) * rate) },
+    });
+    // A worklet only runs while something downstream pulls on it.
+    const pull = ctx.createGain();
+    pull.gain.value = 0;
+    tap.connect(pull).connect(ctx.destination);
+
+    const play = ctx.createBufferSource();
+    play.buffer = sig;
+    let probe = null;
+    if (o.testDelay != null) {
+      probe = ctx.createDelay(1);
+      probe.delayTime.value = o.testDelay;
+      play.connect(probe).connect(tap);
+    } else {
+      play.connect(ctx.destination);
+      this.src.connect(tap);
+    }
+
+    const got = new Promise((res) => { tap.port.onmessage = (e) => res(e.data); });
+    await new Promise((r) => setTimeout(r, 60));
+    tap.port.postMessage({ type: 'arm' });
+    const t0 = ctx.currentTime + 0.12;
+    play.start(t0);
+    let rec;
+    try {
+      rec = await got;
+    } finally {
+      try { play.disconnect(); } catch {}
+      try { if (probe) probe.disconnect(); else this.src.disconnect(tap); } catch {}
+      try { tap.disconnect(); pull.disconnect(); } catch {}
+      this.master.gain.setTargetAtTime(keep, ctx.currentTime, 0.03);
+    }
+
+    const x = rec.data;
+    const t0f = Math.round(t0 * rate);
+    let peakAbs = 0;
+    for (let i = 0; i < x.length; i++) peakAbs = Math.max(peakAbs, Math.abs(x[i]));
+
+    const corrAt = (j) => {
+      let a = 0;
+      for (let i = 0; i < tl; i++) a += (x[j + i] || 0) * tpl[i];
+      return a;
+    };
+    /** Strongest correlation in [lo, hi), refined to a fraction of a sample. */
+    const findPeak = (lo, hi) => {
+      lo = Math.max(0, lo); hi = Math.min(x.length - tl, hi);
+      let best = -Infinity, at = -1;
+      const mags = [];
+      for (let j = lo; j < hi; j++) {
+        const v = Math.abs(corrAt(j));
+        mags.push(v);
+        if (v > best) { best = v; at = j; }
+      }
+      if (at < 0) return null;
+      // Parabolic interpolation on the three points around the peak.
+      const a = Math.abs(corrAt(at - 1)), b = best, cN = Math.abs(corrAt(at + 1));
+      const den = a - 2 * b + cN;
+      const frac = den !== 0 ? 0.5 * (a - cN) / den : 0;
+      mags.sort((p, q) => p - q);
+      const floor = mags[Math.floor(mags.length * 0.5)] || 1e-12;
+      return { at: at + frac, snr: best / Math.max(floor, 1e-12) };
+    };
+
+    const delays = [];
+    let snrMin = Infinity;
+    const first = findPeak(t0f + offs[0] - rec.start, t0f + offs[0] - rec.start + Math.round(0.35 * rate));
+    if (!first || first.snr < 8) {
+      return { ok: false, reason: 'No chirp came back. Is the loop connected, the volume up, and the right input selected?',
+        peak: peakAbs, rate };
+    }
+    const d0 = first.at + rec.start - (t0f + offs[0]);
+    for (let c = 0; c < chirps; c++) {
+      const expect = t0f + offs[c] - rec.start + Math.round(d0);
+      const p = c === 0 ? first : findPeak(expect - Math.round(0.004 * rate), expect + Math.round(0.004 * rate));
+      if (!p) continue;
+      snrMin = Math.min(snrMin, p.snr);
+      delays.push(((p.at + rec.start - (t0f + offs[c])) / rate) * 1000);
+    }
+    delays.sort((a, b) => a - b);
+    const median = delays[Math.floor(delays.length / 2)];
+    return {
+      ok: true, rate,
+      ms: median,
+      spread: delays[delays.length - 1] - delays[0],
+      delays, snr: snrMin, clipped: peakAbs > 0.98,
+      claimed: this.latency().total,
+    };
+  }
+
+  /** The input device's own sample rate, if the browser will say. */
+  inputRate() {
+    const t = this.stream && this.stream.getAudioTracks()[0];
+    const r = t && t.getSettings ? t.getSettings().sampleRate : null;
+    return typeof r === 'number' && r > 0 ? r : null;
+  }
+
+  /**
+   * Close the context and open a new one with different options, keeping
+   * everything else: every knob, the tone stack, the cab, the voicing, the
+   * pedalboard, the input, the output device, the built-in guitar.
+   *
+   * Needed because a context's buffer size and sample rate are fixed when it
+   * is created, and those two are most of the latency.
+   */
+  async restart(opts = {}) {
+    Object.assign(this.opts, opts);
+    if (!this.ctx) return;
+    const old = this.ctx;
+    this.ctx = null;
+    try { await old.close(); } catch {}
+    await this.init();
+    await this.resume();
+    for (const [k, v] of Object.entries(this.requested)) this.set(k, v);
+    if (Object.keys(this.voicing).length) {
+      this.amp.port.postMessage({ type: 'voicing', v: { ...this.voicing } });
+    }
+    this.connectInput();
+    if (this.diOn) this.setDI(true, this.diShape);
   }
 
   /**

@@ -524,12 +524,21 @@ function updateLatency() {
   const l = engine.latency();
   const el = $('latency');
   if (!l) { el.textContent = '—'; return; }
+  const inRate = engine.inputRate();
+  const mismatch = inRate && inRate !== engine.ctx.sampleRate;
+  const g = glitches();
   // Until the output has reported its own latency the total is a floor, not
   // a measurement, and it should look like one.
-  el.textContent = `${l.measured ? '' : '≥ '}${l.total.toFixed(1)} ms · ${engine.ctx.sampleRate / 1000} kHz`;
+  el.textContent = `${l.measured ? '' : '≥ '}${l.total.toFixed(1)} ms · ${engine.ctx.sampleRate / 1000} kHz`
+    + `${mismatch ? ' ⚠' : ''}${g ? ` · ${g} glitch${g === 1 ? '' : 'es'}` : ''}`;
+  el.classList.toggle('warnlat', !!(mismatch || g));
   el.title = `round trip: input ${l.input.toFixed(1)} + processing ${l.base.toFixed(1)} + output ${l.out.toFixed(1)} ms`
+    + `\nbuffer: ${Math.round(l.base / 1000 * engine.ctx.sampleRate)} frames`
     + (l.measured ? '' : '\n(the output has not reported its latency yet)')
-    + (l.input ? '' : '\n(input latency not reported by this browser, or no input plugged in)');
+    + (l.input ? '' : '\n(input latency not reported by this browser, or no input plugged in)')
+    + (mismatch ? `\n⚠ input runs at ${inRate / 1000} kHz, the amp at ${engine.ctx.sampleRate / 1000} kHz — Re-plug to match` : '')
+    + (g == null ? '\nglitch count: not reported by this browser' : `\nglitches since opening: ${g}`)
+    + '\nThis is what the browser claims. Measure lag tests it for real.';
 }
 
 function wireOutput() {
@@ -569,6 +578,119 @@ function wireOutput() {
     });
   }
   restoreOutput();
+}
+
+/* ---------------- latency ---------------- */
+
+// Buffer size and sample rate are fixed when a context is opened, and they
+// are most of the lag, so changing either rebuilds the context. The engine
+// keeps every setting across that.
+const LAT_STORE = 'amp.latency.v1';
+
+function savedLatency() {
+  try { return JSON.parse(localStorage.getItem(LAT_STORE)) || {}; } catch { return {}; }
+}
+function saveLatency() {
+  try {
+    localStorage.setItem(LAT_STORE, JSON.stringify({
+      latencyHint: engine.opts.latencyHint, sampleRate: engine.opts.sampleRate,
+    }));
+  } catch {}
+}
+
+function wireLatency() {
+  const s = savedLatency();
+  if ('latencyHint' in s) engine.opts.latencyHint = s.latencyHint;
+  if (s.sampleRate) engine.opts.sampleRate = s.sampleRate;
+  $('buffer-mode').value = String(engine.opts.latencyHint);
+
+  $('buffer-mode').addEventListener('change', async (e) => {
+    const v = e.target.value === 'interactive' ? 'interactive' : 0;
+    engine.opts.latencyHint = v;
+    saveLatency();
+    if (engine.ctx) {
+      $('latency').textContent = 'reopening…';
+      await engine.restart({ latencyHint: v });
+      drawCab();
+      glitchBase = null;
+      setTimeout(updateLatency, 700);
+    }
+  });
+}
+
+/**
+ * Run the amp at the input device's own sample rate. If they differ, Chrome
+ * resamples everything coming in, and a resampler is a buffer. Called after
+ * plugging in, when the device's rate is finally known.
+ */
+async function matchInputRate() {
+  const r = engine.inputRate();
+  if (!r || !engine.ctx || engine.ctx.sampleRate === r) return false;
+  $('latency').textContent = `matching ${r / 1000} kHz…`;
+  await engine.restart({ sampleRate: r });
+  saveLatency();
+  drawCab();
+  glitchBase = null;
+  setTimeout(updateLatency, 700);
+  return true;
+}
+
+// Glitches, where the browser says. Chrome's playoutStats counts the frames
+// it had to fill in because the amp was not ready in time — which is what a
+// crackle is — so the small buffer can be judged by a number instead of by
+// ear. Where it is missing there is no honest substitute, so nothing is
+// shown rather than a guess.
+let glitchBase = null;
+function glitches() {
+  const st = engine.ctx && engine.ctx.playoutStats;
+  if (!st || typeof st.fallbackFramesEvents !== 'number') return null;
+  if (glitchBase == null) glitchBase = st.fallbackFramesEvents;
+  return st.fallbackFramesEvents - glitchBase;
+}
+
+function wireLagTest() {
+  const dlg = $('lagdlg');
+  const res = $('lag-result');
+  $('btn-lagtest').addEventListener('click', () => { dlg.classList.remove('hidden'); });
+  $('btn-lag-close').addEventListener('click', () => dlg.classList.add('hidden'));
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.classList.add('hidden'); });
+
+  $('btn-lag-run').addEventListener('click', async () => {
+    const btn = $('btn-lag-run');
+    btn.disabled = true;
+    res.className = 'lagres';
+    res.textContent = 'Listening…';
+    try {
+      const r = await engine.measureLag();
+      if (!r.ok) {
+        res.classList.add('bad');
+        res.textContent = r.reason + (r.peak < 0.002 ? ' Nothing at all reached the input.' : '');
+        return;
+      }
+      const verdict = r.ms <= 10 ? 'Tight — that plays like an amp.'
+        : r.ms <= 15 ? 'Playable. You may feel it on fast picking.'
+          : r.ms <= 25 ? 'You will feel this. Try Buffer: smallest, and the same device for In and Out.'
+            : 'Too slow to play comfortably. Check for Bluetooth, and try the interface for both In and Out.';
+      res.innerHTML = `<div class="lagbig">${r.ms.toFixed(1)} ms</div>
+        <div>measured round trip · ${r.rate / 1000} kHz · spread ${r.spread.toFixed(2)} ms across ${r.delays.length} chirps</div>
+        <div>the browser claims ${r.claimed.toFixed(1)} ms${Math.abs(r.ms - r.claimed) > 2
+          ? ` — <b>${r.ms > r.claimed ? 'it is under-reporting' : 'it is over-reporting'} by ${Math.abs(r.ms - r.claimed).toFixed(1)} ms</b>` : ', which is about right'}</div>
+        <div class="lagverdict">${verdict}</div>
+        ${r.clipped ? '<div class="bad">The returning chirp clipped the input — turn the level down and run it again for a cleaner number.</div>' : ''}
+        ${r.spread > 1 ? '<div class="bad">The chirps disagree by more than a millisecond, which usually means an acoustic loop with echoes. A cable loop will be steadier.</div>' : ''}`;
+      try {
+        const log = JSON.parse(localStorage.getItem('amp.lagtests') || '[]');
+        log.push({ at: Date.now(), ms: +r.ms.toFixed(2), claimed: +r.claimed.toFixed(2), rate: r.rate,
+          buffer: engine.opts.latencyHint, in: $('in-state').textContent, out: $('out-device').selectedOptions[0]?.textContent });
+        localStorage.setItem('amp.lagtests', JSON.stringify(log.slice(-50)));
+      } catch {}
+    } catch (err) {
+      res.classList.add('bad');
+      res.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 /* ---------------- displays ---------------- */
@@ -726,12 +848,16 @@ async function wireInput() {
       sel.hidden = devices.length < 2;
       // Permission granted, so output names are visible now too.
       await restoreOutput();
+      await matchInputRate();
     } catch (err) {
       $('in-state').textContent = `no mic: ${err.name}`;
     }
   });
   $('device').addEventListener('change', async (e) => {
-    try { $('in-state').textContent = await engine.enableInput(e.target.value); } catch {}
+    try {
+      $('in-state').textContent = await engine.enableInput(e.target.value);
+      await matchInputRate();
+    } catch {}
   });
 }
 
@@ -864,6 +990,8 @@ buildKnobs();
 wireBoard();
 wireSelects();
 wireDI();
+wireLatency();
+wireLagTest();
 wireInput();
 wireOutput();
 wireRecorder();

@@ -20,6 +20,27 @@
   </div>
 </div>
 
+<div id="lagdlg" class="gate hidden">
+  <div class="gate-card lagcard">
+    <h2>Measure lag</h2>
+    <p class="sub">Plays five short chirps out of the selected output and listens for them on the
+      selected input, timed on the amp's own clock. It measures the delay a note actually
+      suffers, not what the browser claims.</p>
+    <p class="lagstep"><b>Make a loop first.</b> Turn the volume down before you connect anything.</p>
+    <ul class="lagways">
+      <li><b>Your interface</b> — a cable from its output (or headphone out) back into the input
+        you play through. Set both In and Out to the interface. This is the path your guitar takes.</li>
+      <li><b>No cables</b> — set In to the MacBook microphone and Out to the MacBook speakers.
+        Measures the laptop's own path.</li>
+    </ul>
+    <div class="lagrow">
+      <button class="begin" id="btn-lag-run">Measure</button>
+      <button class="mini" id="btn-lag-close">Close</button>
+    </div>
+    <div id="lag-result" class="lagres"></div>
+  </div>
+</div>
+
 <header class="bar">
   <div class="brand"><b>Amp</b><span class="tag">valve</span></div>
   <div class="io">
@@ -35,6 +56,11 @@
   <div class="meters">
     <div class="meter"><i id="meter-fill"></i></div>
     <span id="latency" class="stat">—</span>
+    <select id="buffer-mode" class="dev mini-sel" title="Smallest buffer is the least lag. If you hear crackles, use Safe.">
+      <option value="0">Buffer: smallest</option>
+      <option value="interactive">Buffer: safe</option>
+    </select>
+    <button id="btn-lagtest" class="mini" title="Measure the real round trip with a loop">Measure lag</button>
   </div>
   <button id="btn-rec" class="mini rec"><span class="dot"></span><span id="rec-label">Record</span></button>
   <span id="rec-time" class="stat">0:00</span>
