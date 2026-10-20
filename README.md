@@ -167,6 +167,23 @@ An amp feels tight under about 12 ms. This is roughly three times that, and
 on this hardware the browser's capture path alone is most of the gap — which
 is the case for a native build.
 
+**Native, measured the same way** (`tools/native-lag-probe.sh`, one CoreAudio
+callback reading the input and writing the output, the same chirps, the same
+cable loops, 32-frame buffer):
+
+| loop | native measured | CoreAudio predicts |
+|---|---|---|
+| MacBook jack → Momix in | **14.8 ms** | 7.3 ms |
+| Momix out → Momix in | 30.9 ms | 7.1 ms |
+
+So native takes the best path from 31–36 ms to 14.8 — Chrome's own overhead
+on that path is 16 to 21 ms — but the hardware reports less than it costs.
+The two loops share the Momix input and differ only in the output, which
+isolates it: the Momix's headphone output hides about 16 ms, presumably its
+cab-sim DSP on the playback path, and its input about 6. Monitor on the
+MacBook's jack, not the DI's. Under 10 ms would take an interface whose
+drivers report what they cost.
+
 The first measurements also caught a bug. Changing the buffer rebuilt the
 audio context and reattached the existing capture stream, and the audio that
 arrived while the new context was being built never drained: the safe buffer
