@@ -4,7 +4,7 @@
 import { Engine } from './audio/engine.js';
 import { STACKS } from './audio/tonestack.js';
 import { SPEAKERS } from './audio/cab.js';
-import { encodeWav } from './audio/wav.js';
+import { encodeWav, encodeWavFloat } from './audio/wav.js';
 import { fitCab, responseOf, scoreAgainst } from './audio/cabfit.js';
 import { controls } from './controls.js';
 import { makeKnob, showCatching } from './ui/knob.js';
@@ -243,6 +243,19 @@ window.amp = {
     const k = target.freq.indexOf(1000);
     return { db: resp.map((v) => +(v - resp[k]).toFixed(2)),
       err: +scoreAgainst(resp, target.freq, target.db).toFixed(3) };
+  },
+
+  /**
+   * A reference render of the amp alone, saved as 32-bit float, for
+   * tools/native-null.mjs to compare against the native port.
+   */
+  async renderReference(name, settings = {}) {
+    const out = await engine.renderAmpOnly(await amp._stimulus(), settings);
+    const blob = new Blob([encodeWavFloat(out)], { type: 'audio/wav' });
+    const file = `${name.replace(/[^A-Za-z0-9._-]/g, '-')}.wav`;
+    const res = await fetch(`calibration/${file}`, { method: 'PUT', body: blob });
+    if (!res.ok) throw new Error(`save failed: ${res.status}`);
+    return res.text();
   },
 
   _cached: null,

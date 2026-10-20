@@ -39,6 +39,26 @@ export function encodeWav(buffer) {
   return view.buffer;
 }
 
+/**
+ * 32-bit float WAV, mono, from channel 0. For reference renders: the null
+ * test against the native build compares to around -150 dB, and 16-bit
+ * quantisation would put a floor at -96 under everything.
+ * @returns {ArrayBuffer}
+ */
+export function encodeWavFloat(buffer) {
+  const d = buffer.getChannelData(0);
+  const rate = buffer.sampleRate;
+  const bytes = 44 + d.length * 4;
+  const view = new DataView(new ArrayBuffer(bytes));
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); view.setUint32(4, bytes - 8, true); str(8, 'WAVE');
+  str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 3, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 4, true); view.setUint16(32, 4, true); view.setUint16(34, 32, true);
+  str(36, 'data'); view.setUint32(40, d.length * 4, true);
+  for (let i = 0; i < d.length; i++) view.setFloat32(44 + i * 4, d[i], true);
+  return view.buffer;
+}
+
 /** Chunked, because spreading a megabyte into fromCharCode blows the stack. */
 export function toBase64(arrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);

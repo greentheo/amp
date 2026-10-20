@@ -609,6 +609,43 @@ export class Engine {
     };
   }
 
+  /**
+   * The amp worklet on its own — no pedals, cab, reverb or limiter — for the
+   * null test against the native port, which reaches the same point in its
+   * chain. Parameters go straight onto the AudioParams, as every Web Audio
+   * parameter is, so they are rounded to 32-bit float exactly as they are in
+   * a live render.
+   *
+   * @param {ArrayBuffer} input the stimulus
+   * @param {object} s amp params, plus stack/treble/mid/bass, plus voicing
+   */
+  async renderAmpOnly(input, s = {}) {
+    const rate = wavSampleRate(input) || 48000;
+    const src = await new OfflineAudioContext({ numberOfChannels: 1, length: 1, sampleRate: rate })
+      .decodeAudioData(input.slice(0));
+    const off = new OfflineAudioContext({
+      numberOfChannels: 1, length: src.length + Math.round(rate * 2), sampleRate: rate,
+    });
+    await off.audioWorklet.addModule('js/audio/amp-worklet.js');
+    const amp = new AudioWorkletNode(off, 'amp-processor', {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+    });
+    const P = { drive: 0.55, bias: 0, presence: 0.3, sag: 0.3, masterVol: 0.5, gate: 0.12, stages: 3, ...s };
+    for (const k of ['drive', 'bias', 'presence', 'sag', 'masterVol', 'gate', 'stages']) {
+      amp.parameters.get(k).value = P[k];
+    }
+    if (s.tone !== false) {
+      amp.port.postMessage({ type: 'tone',
+        k: coeffs(P.stack || 'jcm800', P.treble ?? 0.6, P.mid ?? 0.5, P.bass ?? 0.5, rate * 4) });
+    }
+    if (s.voicing) amp.port.postMessage({ type: 'voicing', v: s.voicing });
+    const node = off.createBufferSource();
+    node.buffer = copyBuffer(off, src);
+    node.connect(amp).connect(off.destination);
+    node.start();
+    return off.startRendering();
+  }
+
   /** The input device's own sample rate, if the browser will say. */
   inputRate() {
     const t = this.stream && this.stream.getAudioTracks()[0];

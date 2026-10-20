@@ -10,3 +10,6 @@ calibration/stimulus.json
 calibration/di/
 .venv/
 .venv-x86/
+
+# Native build output.
+native/*/build/
