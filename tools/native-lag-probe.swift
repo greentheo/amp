@@ -109,10 +109,19 @@ func chirp(rate: Double) -> [Float] {
 }
 
 struct Found { let delayFrames: Double; let snr: Double }
+struct Arrival { let delayFrames: Double; let strength: Double }
 
 /// Find each chirp in the recording by matched filtering, refined to a
 /// fraction of a frame with a parabola through the peak.
-func analyse(rec: [Float], starts: [Int], tpl: [Float], rate: Double) -> (found: [Found], peak: Float) {
+///
+/// Latency is the EARLIEST strong arrival, not the strongest. The first
+/// version took the strongest, and the first real run reported 249 ms with a
+/// slope across buffer sizes that matched CoreAudio's prediction exactly — a
+/// constant quarter of a second from somewhere outside the probe. If a
+/// second path (another app hearing the chirp and playing it back, say) is
+/// louder than the direct one, "strongest" reports the second path. So every
+/// strong arrival of the first chirp is listed, and the earliest is used.
+func analyse(rec: [Float], starts: [Int], tpl: [Float], rate: Double) -> (found: [Found], peak: Float, arrivals: [Arrival]) {
     let tl = tpl.count
     var peakAbs: Float = 0
     for v in rec { peakAbs = max(peakAbs, abs(v)) }
@@ -136,23 +145,59 @@ func analyse(rec: [Float], starts: [Int], tpl: [Float], rate: Double) -> (found:
         return (Double(at) + frac, best / floor)
     }
     var out: [Found] = []
+    // Every strong arrival of the first chirp: local maxima of the matched
+    // filter above a fifth of the strongest and well clear of the noise.
+    // Start a little before the chirp, so a peak right at zero delay sits
+    // inside the window rather than on its edge, where it cannot be a maximum.
+    let lo = max(0, starts[0] - 32), hi = min(rec.count - tl, starts[0] + Int(0.35 * rate))
+    guard hi > lo else { return ([], peakAbs, []) }
+    var mags = [Double](repeating: 0, count: hi - lo)
+    for j in lo..<hi { mags[j - lo] = corr(j) }
+    let sorted = mags.sorted()
+    let floor = max(sorted[sorted.count / 2], 1e-12)
+    let top = sorted.last ?? 0
+    var arrivals: [Arrival] = []
+    let sep = Int(0.001 * rate)
+    var j = 1
+    while j < mags.count - 1 {
+        let v = mags[j]
+        if v >= top * 0.2 && v >= floor * 8 && v >= mags[j - 1] && v >= mags[j + 1] {
+            // Keep only the biggest peak within a millisecond, so the
+            // ringing of one arrival is not counted as several.
+            var bj = j
+            var k = j + 1
+            while k < min(mags.count, j + sep) { if mags[k] > mags[bj] { bj = k }; k += 1 }
+            arrivals.append(Arrival(delayFrames: Double(lo + bj - starts[0]), strength: mags[bj] / floor))
+            j = bj + sep
+        } else {
+            j += 1
+        }
+    }
+    // Strengths relative to the strongest, for the report.
+    arrivals = arrivals.map { Arrival(delayFrames: $0.delayFrames, strength: $0.strength * floor / top) }
+    guard let earliest = arrivals.first else { return ([], peakAbs, arrivals) }
+    // Refine the earliest to a fraction of a frame. Its SNR comes from the
+    // wide window's noise floor: judged against only the few samples around
+    // the peak, every peak looks like noise.
+    let at = starts[0] + Int(earliest.delayFrames)
+    let a = corr(at - 1), b = corr(at), c = corr(at + 1), den = a - 2 * b + c
+    let frac = den != 0 ? 0.5 * (a - c) / den : 0
     // The first chirp is searched for widely; once its delay is known the
     // rest are looked for in a narrow window around where it says they are.
-    guard let first = peak(starts[0], starts[0] + Int(0.35 * rate)), first.snr >= 8 else { return ([], peakAbs) }
-    let d0 = first.at - Double(starts[0])
-    out.append(Found(delayFrames: d0, snr: first.snr))
+    let d0 = Double(at - starts[0]) + frac
+    out.append(Found(delayFrames: d0, snr: b / floor))
     for s in starts.dropFirst() {
         let expect = s + Int(d0.rounded())
         if let p = peak(expect - Int(0.004 * rate), expect + Int(0.004 * rate)) {
             out.append(Found(delayFrames: p.at - Double(s), snr: p.snr))
         }
     }
-    return (out, peakAbs)
+    return (out, peakAbs, arrivals)
 }
 
 // ---------------------------------------------------------------- running
 
-func makeAggregate(input: Device, output: Device) -> AudioObjectID? {
+func makeAggregate(input: Device, output: Device, drift: Bool) -> AudioObjectID? {
     // Literal keys rather than the kAudioAggregate* macros, which Swift does
     // not reliably import.
     let desc: [String: Any] = [
@@ -162,7 +207,7 @@ func makeAggregate(input: Device, output: Device) -> AudioObjectID? {
         "master": output.uid,
         "subdevices": [
             ["uid": output.uid],
-            ["uid": input.uid, "drift": 1],
+            ["uid": input.uid, "drift": drift ? 1 : 0],
         ],
     ]
     var agg = AudioObjectID(0)
@@ -179,6 +224,7 @@ struct Run {
     let peak: Float
     let overloads: Int
     let actualBuffer: UInt32
+    let arrivals: [Arrival]
 }
 
 func run(device: AudioObjectID, buffer: UInt32, rate: Double, level: Float) -> Run {
@@ -240,8 +286,8 @@ func run(device: AudioObjectID, buffer: UInt32, rate: Double, level: Float) -> R
 
     let recorded = Array(UnsafeBufferPointer(start: rec, count: min(total, clock.pointee)))
     rec.deallocate(); sig.deallocate(); clock.deallocate()
-    let (found, peak) = analyse(rec: recorded, starts: starts, tpl: tpl, rate: rate)
-    return Run(buffer: buffer, found: found, peak: peak, overloads: overloads, actualBuffer: actual)
+    let (found, peak, arrivals) = analyse(rec: recorded, starts: starts, tpl: tpl, rate: rate)
+    return Run(buffer: buffer, found: found, peak: peak, overloads: overloads, actualBuffer: actual, arrivals: arrivals)
 }
 
 // ---------------------------------------------------------------- main
@@ -262,11 +308,26 @@ if args.contains("--selftest") {
         var seed: UInt32 = 1
         for i in rec.indices { seed = seed &* 1664525 &+ 1013904223; rec[i] = (Float(seed >> 8) / 16777216 - 0.5) * 0.002 }
         for s in starts { for i in 0..<tpl.count { rec[s + trueFrames + i] += tpl[i] * 0.3 } }
-        let (found, _) = analyse(rec: rec, starts: starts, tpl: tpl, rate: rate)
+        let (found, _, _) = analyse(rec: rec, starts: starts, tpl: tpl, rate: rate)
         let d = found.map { $0.delayFrames }
         let err = d.map { abs($0 - Double(trueFrames)) }.max() ?? .infinity
         print(String(format: "  true %5d frames  measured %8.3f  worst error %.3f frames  (%d chirps)", trueFrames, d.first ?? -1, err, d.count))
         if err > 0.05 || d.count != 5 { ok = false }
+    }
+    // The case that fooled the first version: a direct return, then a
+    // louder second path. The answer must be the direct one.
+    do {
+        var rec = [Float](repeating: 0, count: starts.last! + Int(0.9 * rate))
+        for s in starts { for i in 0..<tpl.count {
+            rec[s + 340 + i] += tpl[i] * 0.1          // direct, 7.08 ms
+            rec[s + 11950 + i] += tpl[i] * 0.3        // louder, 249 ms later path
+        } }
+        let (found, _, arr) = analyse(rec: rec, starts: starts, tpl: tpl, rate: rate)
+        let got = found.first?.delayFrames ?? -1
+        let pass = abs(got - 340) < 0.05 && arr.count == 2
+        print(String(format: "  direct 340 + louder 11950: measured %8.3f frames, %d arrivals listed  %@",
+                     got, arr.count, pass ? "ok" : "WRONG"))
+        if !pass { ok = false }
     }
     print(ok ? "selftest passed" : "SELFTEST FAILED")
     exit(ok ? 0 : 1)
@@ -287,6 +348,7 @@ let inName = opt("--in") ?? "Momix"
 let outName = opt("--out") ?? inName
 let buffers = (opt("--buffers") ?? "32,64,128,256").split(separator: ",").compactMap { UInt32($0) }
 let level = Float(opt("--level") ?? "0.3") ?? 0.3
+let drift = !args.contains("--no-drift")
 
 guard let input = devs.first(where: { $0.hasIn && $0.name.localizedCaseInsensitiveContains(inName) }) else {
     print("no input device matching \"\(inName)\" — try --list"); exit(1)
@@ -304,7 +366,7 @@ if input.rate != rate {
 var device = output.id
 var aggregate: AudioObjectID? = nil
 if input.id != output.id {
-    guard let agg = makeAggregate(input: input, output: output) else {
+    guard let agg = makeAggregate(input: input, output: output, drift: drift) else {
         print("could not build an aggregate of \(input.name) and \(output.name)"); exit(1)
     }
     aggregate = agg
@@ -317,7 +379,12 @@ let fixedIn = input.fixedLatency(kAudioObjectPropertyScopeInput)
 let fixedOut = output.fixedLatency(kAudioObjectPropertyScopeOutput)
 let originalBuffer: UInt32 = getProp(device, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal, 0)
 
-print("in  \(input.name)\nout \(output.name)\(aggregate != nil ? "   (private aggregate, drift-corrected)" : "")")
+print("in  \(input.name)\nout \(output.name)\(aggregate != nil ? "   (private aggregate\(drift ? ", drift-corrected" : ", no drift correction"))" : "")")
+// Another app holding the same devices can hear the chirps and play them
+// back into the loop, which shows up as a second arrival.
+for d in [input, output] where (getProp(d.id, kAudioDevicePropertyDeviceIsRunningSomewhere, kAudioObjectPropertyScopeGlobal, UInt32(0)) != 0) {
+    print("⚠  \(d.name) (\(d.hasIn ? "in" : "out")) is already in use by another app — quit it (Chrome?) or it may add a second path to the loop")
+}
 print(String(format: "%.0f Hz, reported fixed latency %d in + %d out frames", rate, fixedIn, fixedOut))
 print("\nTurn the volume down and direct monitoring off. Starting in 2 s…\n")
 Thread.sleep(forTimeInterval: 2)
@@ -329,7 +396,7 @@ for b in buffers {
     let predicted = Double(fixedIn + fixedOut + 2 * r.actualBuffer) / rate * 1000
     if r.found.isEmpty {
         let why = r.peak < 0.002 ? "nothing reached the input" : String(format: "no clear chirp (input peaked at %.3f)", r.peak)
-        print(String(format: "%5d    —  %@  — check the cable, the volume and the input", r.actualBuffer, why as NSString))
+        print(String(format: "%5d    —  %@  — check the cable, the volume and the input   glitches %d", r.actualBuffer, why as NSString, r.overloads))
         continue
     }
     let ms = r.found.map { $0.delayFrames / rate * 1000 }.sorted()
@@ -338,6 +405,10 @@ for b in buffers {
     var note = r.actualBuffer != b ? "  (asked \(b), got \(r.actualBuffer))" : ""
     if r.peak > 0.98 { note += "  CLIPPED — turn it down" }
     print(String(format: "%5d   %7.2f ms  %6.2f ms  %7.2f ms  %5.0f   %4d%@", r.actualBuffer, med, spread, predicted, snr, r.overloads, note as NSString))
+    if r.arrivals.count > 1 {
+        let list = r.arrivals.map { String(format: "%.1f ms (%.0f%%)", $0.delayFrames / rate * 1000, $0.strength * 100) }.joined(separator: ", ")
+        print("         heard it \(r.arrivals.count) times: \(list) — the first is the latency, the rest are other paths")
+    }
     rows.append((r.actualBuffer, med))
 }
 
