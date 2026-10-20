@@ -146,6 +146,33 @@ anything in the code, and the output picker exists partly so that difference
 can be seen and chosen. Until the output has reported, the figure is shown
 with a ≥ because it is a floor, not a measurement.
 
+**Measured, not claimed.** Even the corrected readout is only what the browser
+admits to. **Measure lag** plays chirps out of the chosen output, records them
+back through a cable into the chosen input, and times them on the context's
+own clock — the delay a note really suffers. On a MacBook with a USB DI, guitar
+in through the DI and out through the MacBook's headphone jack:
+
+| buffer | measured | browser claims |
+|---|---|---|
+| smallest | 35.9 ms | 13.3 ms |
+| safe | 30.8 ms | 19.0 ms |
+
+The browser under-reports by 12 to 23 ms, nearly all of it Chrome's capture
+path, which delivers in 10 ms chunks and buffers them before a page ever sees
+them. Nothing in JavaScript reaches it. The two buffer settings land within
+about one capture chunk of each other, and which is lower varies from one
+opening of the input to the next.
+
+An amp feels tight under about 12 ms. This is roughly three times that, and
+on this hardware the browser's capture path alone is most of the gap — which
+is the case for a native build.
+
+The first measurements also caught a bug. Changing the buffer rebuilt the
+audio context and reattached the existing capture stream, and the audio that
+arrived while the new context was being built never drained: the safe buffer
+measured 73.4 ms. Reopening the input from cold after a rebuild brought the
+same path to 30.8.
+
 ## The engine socket
 
 The amp block sits between `preIn` and `preOut` in `engine.js` and nothing
