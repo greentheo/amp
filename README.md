@@ -310,7 +310,20 @@ fitness for a particular purpose. See [LICENSE](LICENSE) for the full text.
 The Affero clause matters for a web app in a way the plain GPL's does not: if
 you run a modified version of this on a server for other people to use, you
 owe them its source too. And it is the licence the native build needs, since
-that build uses JUCE 8 under its AGPLv3 option.
+that build uses JUCE 9 under its AGPLv3 option.
+
+**App stores.** The AGPL does not allow the extra restrictions an app
+store's terms impose, so Amp's own code carries an additional permission for
+them: [APP-STORE-EXCEPTION.md](APP-STORE-EXCEPTION.md). A store build can be
+conveyed as long as its source stays available under the AGPL. That
+permission can only cover Amp's code, not JUCE's, so builds for Apple's
+stores use JUCE under its Starter licence, which is free up to $20,000 a year
+in revenue. Everything built from this repository — the browser app and the
+signed Mac download — uses JUCE under the AGPLv3 as before.
+
+**Contributing.** Contributions come in on the same terms, the AGPLv3 with
+that permission, signed off with `git commit -s`. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Third-party material it uses keeps its own terms: the FreePats guitar samples
 fetched by `tools/fetch-di.mjs` are CC0, and `tools/bias-render.py` drives
