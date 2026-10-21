@@ -248,6 +248,10 @@ and calibration. Knobs and the tone stack are JUCE parameters, so they save
 with the app and can be automated in a host later; the cab, the pedalboard
 and the voicing travel as the same JSON as `engine.chainSettings()`.
 
+The icon is `icons/amp.svg`, a chicken-head knob on a blonde amp's panel.
+`tools/icons.sh` renders the app icon, the favicons and the home-screen
+icon from it.
+
 Two settings help while working on it. `AMP_WEB_ROOT` serves the page from
 a checkout instead of the copy inside the app, so an edit needs a reload,
 not a rebuild. `AMP_LOG` logs every message across the bridge. Page errors

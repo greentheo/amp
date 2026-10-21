@@ -5,12 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#120f0d">
 <title>Amp — a guitar amplifier in the browser</title>
+<link rel="icon" type="image/svg+xml" href="icons/amp.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/amp-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="css/style.css?v=1">
 </head>
 <body>
 
 <div id="gate" class="gate">
   <div class="gate-card">
+    <img class="gate-logo" src="icons/amp.svg" alt="" width="132" height="132">
     <h1>Amp</h1>
     <p class="sub">A valve preamp, a tone stack off the schematic, and a speaker.
       Plug a guitar into your interface, or just listen to the built-in one.</p>
@@ -43,7 +47,7 @@
 </div>
 
 <header class="bar">
-  <div class="brand"><b>Amp</b><span class="tag">valve</span></div>
+  <div class="brand"><img class="logo" src="icons/amp-64.png" alt="" width="28" height="28"><b>Amp</b><span class="tag">valve</span></div>
   <div class="io native-only">
     <button id="btn-audio" class="mini" title="Input, output, sample rate and buffer size">Audio settings</button>
     <span id="audio-state" class="state"></span>

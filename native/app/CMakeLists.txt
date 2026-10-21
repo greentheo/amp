@@ -46,7 +46,17 @@ juce_add_plugin(Amp
   NEEDS_MIDI_OUTPUT FALSE
   MICROPHONE_PERMISSION_ENABLED TRUE
   MICROPHONE_PERMISSION_TEXT "Amp plays your guitar, which arrives through an audio input."
+  # Rendered from icons/amp.svg by tools/icons.sh.
+  ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/../../icons/amp-1024.png"
+  ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/../../icons/amp-64.png"
   COPY_PLUGIN_AFTER_BUILD FALSE)
+
+# JUCE turns the icon PNGs into AppIcon.icns when CMake configures, not
+# when it builds, so a new icon has to send the build back through
+# configuration or the app keeps the old one.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../icons/amp-1024.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../icons/amp-64.png")
 
 target_sources(Amp PRIVATE src/Processor.cpp src/Editor.cpp)
 
@@ -77,6 +87,7 @@ add_custom_target(AmpWebUI ALL
   COMMAND ${CMAKE_COMMAND} -E copy "${AMP_WEB_SOURCE}/index.html" "${AMP_WEB_DEST}/"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${AMP_WEB_SOURCE}/css" "${AMP_WEB_DEST}/css"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${AMP_WEB_SOURCE}/js" "${AMP_WEB_DEST}/js"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${AMP_WEB_SOURCE}/icons" "${AMP_WEB_DEST}/icons"
   COMMENT "Copying the web UI into the app bundle"
   VERBATIM)
 add_dependencies(AmpWebUI Amp_Standalone)

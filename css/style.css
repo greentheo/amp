@@ -25,6 +25,7 @@ body{background:var(--bg);color:var(--ink);
 :root:not(.native) .native-only{display:none !important}
 .gate-card{max-width:460px;padding:30px 34px;text-align:center;
   background:var(--plate);border:1px solid var(--line);border-radius:14px}
+.gate-logo{display:block;width:132px;height:132px;margin:-8px auto 4px}
 .gate-card h1{margin:0 0 6px;font-size:34px;letter-spacing:.14em;text-transform:uppercase}
 .sub{color:var(--dim);margin:0 0 20px}
 .begin{background:var(--accent);color:#2a1a08;border:0;border-radius:999px;
@@ -36,6 +37,8 @@ body{background:var(--bg);color:var(--ink);
 /* ---------- top bar ---------- */
 .bar{display:flex;align-items:center;gap:14px;padding:9px 16px;flex-wrap:wrap;
   background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center}
+.brand .logo{width:28px;height:28px;margin:-4px 6px -4px -4px}
 .brand b{letter-spacing:.2em;text-transform:uppercase}
 .tag{margin-left:8px;font-size:10px;color:var(--faint);letter-spacing:.18em;text-transform:uppercase}
 .io{display:flex;align-items:center;gap:8px}

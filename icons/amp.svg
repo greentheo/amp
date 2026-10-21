@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Amp's icon: a chicken-head knob turned up to about 8, on the brown
+    control panel of a blonde amp, with a jewel pilot lamp lit and oxblood
+    grille cloth below the gold piping.
+
+    Drawn on Apple's macOS grid: the rounded square is 824 wide, inset 100
+    from the 1024 canvas, with its shadow baked in, because macOS draws
+    neither. tools/icons.sh renders every size from this file, including a
+    full-bleed square for home screens, which round icons themselves.
+
+    It was a glowing valve first, and that was too close to Positive Grid's
+    BIAS icon. Hardware every amp has, in no one brand's colours, is the point.
+  -->
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.38"/>
+    </filter>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="3" seed="11" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.6 1.05" result="a"/>
+      <feFlood flood-color="#5a4022" flood-opacity="0.16"/>
+      <feComposite in2="a" operator="in"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="knobShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <filter id="glow" x="-150%" y="-150%" width="400%" height="400%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+    <clipPath id="squircle"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+    <linearGradient id="tolex" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#efe4cb"/><stop offset="1" stop-color="#cdb990"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a271c"/><stop offset="1" stop-color="#24160f"/>
+    </linearGradient>
+    <linearGradient id="piping" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4d48e"/>
+      <stop offset="0.5" stop-color="#d1a04c"/>
+      <stop offset="1" stop-color="#8c5f22"/>
+    </linearGradient>
+    <pattern id="weave" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#5b1e1b"/>
+      <path d="M0 4 H8 M8 12 H16" stroke="#7a302a" stroke-width="4"/>
+      <path d="M4 8 V16 M12 0 V8" stroke="#43130f" stroke-width="4"/>
+    </pattern>
+    <linearGradient id="grilleShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0.45"/>
+      <stop offset="0.35" stop-color="#000" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="bakelite" cx="0.38" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#4a4541"/>
+      <stop offset="0.45" stop-color="#191614"/>
+      <stop offset="1" stop-color="#050404"/>
+    </radialGradient>
+    <linearGradient id="skirtRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6a635d"/><stop offset="0.5" stop-color="#1c1917"/><stop offset="1" stop-color="#000"/>
+    </linearGradient>
+    <radialGradient id="jewel" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffe0d2"/>
+      <stop offset="0.35" stop-color="#ff3b2b"/>
+      <stop offset="1" stop-color="#7d0b05"/>
+    </radialGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f4f2"/><stop offset="0.5" stop-color="#8d8a86"/><stop offset="1" stop-color="#d9d7d3"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.12" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <!-- tolex -->
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tolex)"/>
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="#fff" filter="url(#grain)"/>
+
+    <g clip-path="url(#squircle)">
+      <!-- grille cloth along the bottom, behind piping -->
+      <rect x="100" y="700" width="824" height="240" fill="url(#weave)"/>
+      <rect x="100" y="700" width="824" height="240" fill="url(#grilleShade)"/>
+      <rect x="100" y="694" width="824" height="10" fill="url(#piping)"/>
+    </g>
+
+    <!-- the control panel -->
+    <rect x="150" y="150" width="724" height="500" rx="136" fill="#120a06"/>
+    <rect x="156" y="156" width="712" height="488" rx="130" fill="url(#panel)"/>
+    <rect x="156" y="156" width="712" height="488" rx="130" fill="none" stroke="url(#piping)" stroke-width="6" opacity="0.9"/>
+
+    <!-- the scale, 0 to 10 in half steps across 270 degrees -->
+    <g stroke="#f1e4c6" stroke-linecap="round" opacity="0.92">
+      <line x1="357.9" y1="572.1" x2="333.8" y2="596.2" stroke-width="9"/>
+      <line x1="319.3" y1="536.1" x2="304.0" y2="545.5" stroke-width="5"/>
+      <line x1="304.7" y1="485.4" x2="272.3" y2="495.9" stroke-width="9"/>
+      <line x1="286.7" y1="435.7" x2="268.8" y2="437.1" stroke-width="5"/>
+      <line x1="296.7" y1="383.9" x2="263.1" y2="378.6" stroke-width="9"/>
+      <line x1="303.2" y1="331.5" x2="286.6" y2="324.6" stroke-width="5"/>
+      <line x1="335.6" y1="289.9" x2="308.1" y2="269.9" stroke-width="9"/>
+      <line x1="365.2" y1="246.1" x2="353.5" y2="232.5" stroke-width="5"/>
+      <line x1="413.0" y1="223.8" x2="397.6" y2="193.5" stroke-width="9"/>
+      <line x1="459.2" y1="198.2" x2="455.0" y2="180.7" stroke-width="5"/>
+      <line x1="512.0" y1="200.0" x2="512.0" y2="166.0" stroke-width="9"/>
+      <line x1="564.8" y1="198.2" x2="569.0" y2="180.7" stroke-width="5"/>
+      <line x1="611.0" y1="223.8" x2="626.4" y2="193.5" stroke-width="9"/>
+      <line x1="658.8" y1="246.1" x2="670.5" y2="232.5" stroke-width="5"/>
+      <line x1="688.4" y1="289.9" x2="715.9" y2="269.9" stroke-width="9"/>
+      <line x1="720.8" y1="331.5" x2="737.4" y2="324.6" stroke-width="5"/>
+      <line x1="727.3" y1="383.9" x2="760.9" y2="378.6" stroke-width="9"/>
+      <line x1="737.3" y1="435.7" x2="755.2" y2="437.1" stroke-width="5"/>
+      <line x1="719.3" y1="485.4" x2="751.7" y2="495.9" stroke-width="9"/>
+      <line x1="704.7" y1="536.1" x2="720.0" y2="545.5" stroke-width="5"/>
+      <line x1="666.1" y1="572.1" x2="690.2" y2="596.2" stroke-width="9"/>
+    </g>
+
+    <!-- jewel pilot lamp -->
+    <circle cx="768" cy="252" r="58" fill="#ff4a2e" opacity="0.55" filter="url(#glow)"/>
+    <circle cx="768" cy="252" r="40" fill="url(#chrome)"/>
+    <circle cx="768" cy="252" r="31" fill="url(#jewel)"/>
+    <g stroke="#ffffff" stroke-opacity="0.28" stroke-width="2">
+      <path d="M768 221 V283 M737 252 H799 M746 230 L790 274 M790 230 L746 274"/>
+    </g>
+    <ellipse cx="759" cy="241" rx="10" ry="7" fill="#fff" opacity="0.75"/>
+
+    <!-- the knob: its shadow, the skirt, then the chicken head -->
+    <ellipse cx="526" cy="444" rx="150" ry="150" fill="#000" opacity="0.55" filter="url(#knobShadow)"/>
+    <circle cx="512" cy="418" r="146" fill="url(#skirtRim)"/>
+    <circle cx="512" cy="418" r="136" fill="url(#bakelite)"/>
+    <circle cx="512" cy="418" r="136" fill="none" stroke="#000" stroke-opacity="0.6" stroke-width="3"/>
+    <g transform="rotate(80 512 418)">
+      <path d="M512 212 C542 258 586 354 588 418
+               C590 492 554 540 512 542
+               C470 540 434 492 436 418
+               C438 354 482 258 512 212 Z"
+            fill="url(#bakelite)" stroke="#000" stroke-opacity="0.7" stroke-width="3"/>
+      <!-- a highlight down the head's leading edge -->
+      <path d="M504 232 C482 278 450 358 450 418"
+            fill="none" stroke="#fff" stroke-opacity="0.22" stroke-width="10" stroke-linecap="round"/>
+      <!-- the pointer line -->
+      <path d="M512 388 L512 234" stroke="#f3e8d2" stroke-width="12" stroke-linecap="round"/>
+    </g>
+
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#rim)"/>
+  </g>
+</svg>
