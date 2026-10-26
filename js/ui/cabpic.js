@@ -3,7 +3,8 @@
 // Axis and Distance are where the microphone is, and that is easier to see
 // than to read: a side view of the speaker, with the mic sliding back as
 // Distance goes up (and the room's reflections reaching it), and moving off
-// the dust cap toward the cone's edge as Axis goes down. Cab is a blend, so
+// the dust cap toward the cone's edge as Axis goes down. Room raises the
+// walls around them: off the back wall too, the more of it there is. Cab is a blend, so
 // it is drawn as the signal splitting: through the cab, or straight past it.
 //
 // They follow the controls registry, so a drag, a MIDI knob and a loaded
@@ -25,8 +26,10 @@ function micPicture() {
   const svg = el('svg', { viewBox: '0 0 230 120', class: 'cabpic', role: 'img' });
   el('title', {}, svg).textContent = 'Where the microphone is';
   // The room: a ceiling for Distance's reflections to come off.
-  el('line', { x1: 6, y1: 6, x2: 224, y2: 6, class: 'room' }, svg);
+  const ceiling = el('line', { x1: 6, y1: 6, x2: 224, y2: 6, class: 'room' }, svg);
+  const wall = el('line', { x1: 224, y1: 6, x2: 224, y2: 108, class: 'room' }, svg);
   const bounce = el('path', { class: 'bounce' }, svg);
+  const echo = el('path', { class: 'bounce' }, svg);
   // Speaker in profile: magnet, cone, baffle, dust cap, grille cloth.
   el('rect', { x: 6, y: 47, width: 10, height: 26, rx: 2, class: 'mag' }, svg);
   el('path', { d: 'M16 50 L44 16 L44 104 L16 70 Z', class: 'cone' }, svg);
@@ -42,7 +45,7 @@ function micPicture() {
   el('line', { x1: 46, y1: 0, x2: 58, y2: 0, class: 'cable' }, mic);
   const label = el('text', { x: 224, y: 116, 'text-anchor': 'end', class: 'cap-text' }, svg);
 
-  const draw = (axis, distance) => {
+  const draw = (axis, distance, room = 0) => {
     // Distance: from just off the grille to across the room.
     const x = 58 + distance * 112;
     // Axis: 1 is dead centre on the dust cap (bright), 0 out at the edge of
@@ -57,10 +60,16 @@ function micPicture() {
     // The room's reflection reaches the mic more the further back it is.
     const mid = (50 + x) / 2;
     bounce.setAttribute('d', `M50 ${target.toFixed(1)} L${mid.toFixed(1)} 6 L${x.toFixed(1)} ${y.toFixed(1)}`);
-    bounce.style.opacity = (0.1 + distance * 0.8).toFixed(2);
+    bounce.style.opacity = Math.min(1, 0.1 + distance * 0.8 + room * 0.3).toFixed(2);
+    // The back wall: the room's own sound, coming back past the mic.
+    echo.setAttribute('d', `M50 ${target.toFixed(1)} L224 ${(30 + (1 - room) * 40).toFixed(1)} L${x.toFixed(1)} ${y.toFixed(1)}`);
+    echo.style.opacity = (room * 0.9).toFixed(2);
+    wall.style.opacity = (0.15 + room * 0.85).toFixed(2);
+    ceiling.style.opacity = (0.4 + room * 0.6).toFixed(2);
     const where = axis > 0.75 ? 'on the cap' : axis > 0.35 ? 'cap edge' : 'off-axis, cone edge';
     const how = distance < 0.3 ? 'close' : distance < 0.7 ? 'a little back' : 'well back';
-    label.textContent = `${how}, ${where}`;
+    const space = room < 0.05 ? '' : room < 0.4 ? ', small room' : room < 0.75 ? ', live room' : ', big room';
+    label.textContent = `${how}, ${where}${space}`;
   };
   return { svg, draw };
 }
@@ -97,13 +106,13 @@ export function mountCabPictures(host) {
   const blend = blendPicture();
   host.append(mic.svg, blend.svg);
   const v = (id, dflt) => (controls.get(id) ? controls.value(id) : dflt);
-  const drawMic = () => mic.draw(v('amp.axis', 0.6), v('amp.distance', 0.25));
+  const drawMic = () => mic.draw(v('amp.axis', 0.6), v('amp.distance', 0.25), v('amp.room', 0));
   const drawBlend = () => blend.draw(v('amp.cabMix', 1));
   drawMic();
   drawBlend();
   controls.on((kind, id) => {
     if (kind !== 'change') return;
-    if (id === 'amp.axis' || id === 'amp.distance') drawMic();
+    if (id === 'amp.axis' || id === 'amp.distance' || id === 'amp.room') drawMic();
     else if (id === 'amp.cabMix') drawBlend();
   });
 }

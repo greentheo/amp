@@ -115,7 +115,7 @@ void AmpEditor::handle(const juce::var& m) {
             if (m.hasProperty(k)) proc_.midiTouched(juce::String("amp.") + k);
     } else if (type == "cab") {
         proc_.setCab(m["opts"]);
-        for (const char* k : {"axis", "distance"})
+        for (const char* k : {"axis", "distance", "room"})
             if (m["opts"].hasProperty(k)) proc_.midiTouched(juce::String("amp.") + k);
     } else if (type == "board") {
         proc_.setBoard(m["board"]);

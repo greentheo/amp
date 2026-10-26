@@ -667,6 +667,127 @@ class Delay extends Pedal {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Reverb: a room to a hall, in a pedal.                               */
+/* ------------------------------------------------------------------ */
+//
+// Eight delay lines feeding back into each other through a Hadamard matrix
+// (a feedback delay network), after four allpasses that smear the attack so
+// the first reflections are a wash rather than a flam. Decay sets each
+// line's loss for the time the tail takes to fall 60 dB. Tone is a low-pass
+// inside the loop, so the top dies first, as it does in a real space. Size
+// scales every line together, from a small room to a hall. Pre-delay holds
+// the wash back so the note speaks first. Two lines drift slowly: a network
+// this small rings metallic on a held note without it.
+//
+// Mono, like the rest of the board, and it rings out when switched off.
+
+// Line lengths at Size 1, in seconds: no two share a factor worth hearing.
+const VERB_LINES = [0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0599, 0.0677, 0.0793];
+const VERB_DIFFUSE = [0.00477, 0.00359, 0.01273, 0.00931];
+const VERB_HALF = 1 / Math.sqrt(8);
+
+class Reverb extends Pedal {
+  static get parameterDescriptors() {
+    return [ON, P('mix', 0.3), P('decay', 0.45), P('tone', 0.5), P('size', 0.6), P('predelay', 0.2)];
+  }
+
+  constructor() {
+    super();
+    const cap = Math.ceil(sampleRate * 0.12);
+    this.lines = VERB_LINES.map(() => new Float32Array(cap));
+    this.lp = new Float64Array(8);
+    this.v = new Float64Array(8);
+    this.g = new Float64Array(8);
+    this.ap = VERB_DIFFUSE.map((t) => new Float32Array(Math.round(t * sampleRate)));
+    this.apW = [0, 0, 0, 0];
+    this.pre = new Float32Array(Math.ceil(sampleRate * 0.16));
+    this.w = 0;
+    this.pw = 0;
+    this.scale = 0.95;
+    this.pd = 0.03 * sampleRate;
+    this.aD = 1 - Math.exp(-1 / (0.08 * sampleRate));
+    this.feed = 0;
+    this.aFeed = 1 - Math.exp(-1 / (0.006 * sampleRate));
+    this.hold = 0;
+    this.lfo1 = 0; this.lfo2 = 0;
+  }
+
+  trails() { return this.hold > 0; }
+
+  idle() {
+    for (const l of this.lines) l.fill(0);
+    for (const a of this.ap) a.fill(0);
+    this.pre.fill(0);
+    this.lp.fill(0);
+    this.hold = 0;
+  }
+
+  render(x, y, n, params, on) {
+    const mix = params.mix[0];
+    const rt60 = 0.25 * Math.pow(40, params.decay[0]);
+    const aTone = poleAt(1200 * Math.pow(10, params.tone[0]), sampleRate);
+    const scaleTarget = 0.35 + params.size[0];
+    const pdTarget = 0.15 * params.predelay[0] * sampleRate;
+    // Each line's loss for one trip around it, at the size it is now.
+    const g = this.g;
+    for (let k = 0; k < 8; k++) g[k] = Math.pow(10, (-3 * VERB_LINES[k] * this.scale) / rt60);
+    const inc1 = (2 * Math.PI * 0.53) / sampleRate, inc2 = (2 * Math.PI * 0.71) / sampleRate;
+    const depth = 0.0003 * sampleRate;
+    const { lines, lp, v, ap, apW, pre } = this;
+    const cap = lines[0].length;
+    for (let i = 0; i < n; i++) {
+      const xi = x ? x[i] : 0;
+      this.feed += (on - this.feed) * this.aFeed;
+      this.scale += (scaleTarget - this.scale) * this.aD;
+      this.pd += (pdTarget - this.pd) * this.aD;
+      this.lfo1 += inc1; this.lfo2 += inc2;
+      if (this.lfo1 > 6.283185307) this.lfo1 -= 6.283185307;
+      if (this.lfo2 > 6.283185307) this.lfo2 -= 6.283185307;
+
+      // Pre-delay, then the diffusers.
+      let d = readHermite(pre, this.pw, Math.max(4, this.pd));
+      pre[this.pw] = xi * this.feed;
+      this.pw = (this.pw + 1) % pre.length;
+      for (let k = 0; k < 4; k++) {
+        const b = ap[k], r = b[apW[k]];
+        const u = d - 0.62 * r;
+        b[apW[k]] = u;
+        apW[k] = (apW[k] + 1) % b.length;
+        d = r + 0.62 * u;
+      }
+
+      // The network: read every line, darken, lose, mix, write back.
+      for (let k = 0; k < 8; k++) {
+        let len = VERB_LINES[k] * this.scale * sampleRate;
+        if (k === 2) len += depth * Math.sin(this.lfo1);
+        else if (k === 5) len += depth * Math.sin(this.lfo2);
+        const r = readHermite(lines[k], this.w, len);
+        lp[k] += (r - lp[k]) * aTone;
+        if (Math.abs(lp[k]) < 1e-20) lp[k] = 0;
+        v[k] = lp[k] * g[k];
+      }
+      for (let h = 1; h < 8; h *= 2) {
+        for (let j = 0; j < 8; j += 2 * h) {
+          for (let k = j; k < j + h; k++) {
+            const a = v[k], b = v[k + h];
+            v[k] = a + b;
+            v[k + h] = a - b;
+          }
+        }
+      }
+      for (let k = 0; k < 8; k++) lines[k][this.w] = v[k] * VERB_HALF + d * 0.5;
+      this.w = (this.w + 1) % cap;
+
+      const wet = (lp[0] - lp[1] + lp[2] - lp[3] + lp[4] - lp[5] + lp[6] - lp[7]) * 1.1;
+      if (Math.abs(wet) > 1e-5) this.hold = 2048;
+      else if (this.hold > 0) this.hold--;
+      y[i] = xi + wet * mix;
+    }
+    this.mix = this.feed;
+  }
+}
+
 registerProcessor('pedal-overdrive', Overdrive);
 registerProcessor('pedal-fuzz', Fuzz);
 registerProcessor('pedal-comp', Compressor);
@@ -677,3 +798,4 @@ registerProcessor('pedal-volume', Volume);
 registerProcessor('pedal-chorus', Chorus);
 registerProcessor('pedal-tremolo', Tremolo);
 registerProcessor('pedal-delay', Delay);
+registerProcessor('pedal-reverb', Reverb);

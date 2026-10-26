@@ -48,7 +48,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The spring rings for 1.4 s; the delay's repeats can outlast it.
+    // The spring rings for 1.6 s; the delay's repeats can outlast it.
     double getTailLengthSeconds() const override { return 2.0; }
 
     int getNumPrograms() override { return 1; }

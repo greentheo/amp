@@ -78,7 +78,9 @@ export function initCabView({ engine, setKnob, els }) {
   /** The tone of a cab, in dB at FREQS, 0 dB at 1 kHz. Cached. */
   function curve(o) {
     const clean = {};
-    for (const k of Object.keys(o).sort()) if (k !== 'custom' && o[k] != null) clean[k] = o[k];
+    // The room is left out: this is the cab's tone, and a room's tail only
+    // adds ripples to it (and a lot of work).
+    for (const k of Object.keys(o).sort()) if (k !== 'custom' && k !== 'room' && o[k] != null) clean[k] = o[k];
     const key = JSON.stringify(clean);
     if (!curves.has(key)) {
       curves.set(key, renderCab(new OfflineAudioContext(1, 1, RATE), clean).then((ir) => {

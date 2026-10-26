@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 
+#include "ampcore/jsmath.hpp"
 #include "ampcore/resampler.hpp"
 
 namespace ampcore {
@@ -398,6 +399,107 @@ private:
     double lp_ = 0, feed_ = 0, hold_ = 0, wow_ = 0, flut_ = 0;
 };
 
+/* Reverb: a room to a hall. See pedal-worklet.js for the network story. */
+constexpr std::array<double, 8> VERB_LINES = {0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0599, 0.0677, 0.0793};
+constexpr std::array<double, 4> VERB_DIFFUSE = {0.00477, 0.00359, 0.01273, 0.00931};
+
+class Reverb : public Pedal {
+public:
+    explicit Reverb(double rate)
+        : Pedal(rate, {{"on", 0}, {"mix", 0.3f}, {"decay", 0.45f}, {"tone", 0.5f}, {"size", 0.6f},
+                       {"predelay", 0.2f}}),
+          pre_(static_cast<size_t>(std::ceil(rate * 0.16)), 0.0f),
+          pd_(0.03 * rate),
+          aD_(1 - std::exp(-1 / (0.08 * rate))),
+          aFeed_(1 - std::exp(-1 / (0.006 * rate))),
+          half_(1 / std::sqrt(8.0)) {
+        const auto cap = static_cast<size_t>(std::ceil(rate * 0.12));
+        for (auto& l : lines_) l.assign(cap, 0.0f);
+        for (size_t k = 0; k < 4; k++) ap_[k].assign(static_cast<size_t>(jsRound(VERB_DIFFUSE[k] * rate)), 0.0f);
+    }
+
+private:
+    bool trails() const override { return hold_ > 0; }
+    void idle() override {
+        for (auto& l : lines_) std::fill(l.begin(), l.end(), 0.0f);
+        for (auto& a : ap_) std::fill(a.begin(), a.end(), 0.0f);
+        std::fill(pre_.begin(), pre_.end(), 0.0f);
+        lp_.fill(0);
+        hold_ = 0;
+    }
+
+    void render(const float* x, float* y, int n, int on) override {
+        const double mix = knob(1);
+        const double rt60 = 0.25 * std::pow(40.0, knob(2));
+        const double aTone = poleAt(1200 * std::pow(10.0, knob(3)), rate_);
+        const double scaleTarget = 0.35 + knob(4);
+        const double pdTarget = 0.15 * knob(5) * rate_;
+        std::array<double, 8> g;
+        for (size_t k = 0; k < 8; k++) g[k] = std::pow(10.0, (-3 * VERB_LINES[k] * scale_) / rt60);
+        const double inc1 = (2 * M_PI * 0.53) / rate_, inc2 = (2 * M_PI * 0.71) / rate_;
+        const double depth = 0.0003 * rate_;
+        const int cap = static_cast<int>(lines_[0].size());
+        const int preLen = static_cast<int>(pre_.size());
+        std::array<double, 8> v;
+        for (int i = 0; i < n; i++) {
+            const double xi = in(x, i);
+            feed_ += (on - feed_) * aFeed_;
+            scale_ += (scaleTarget - scale_) * aD_;
+            pd_ += (pdTarget - pd_) * aD_;
+            lfo1_ += inc1; lfo2_ += inc2;
+            if (lfo1_ > 6.283185307) lfo1_ -= 6.283185307;
+            if (lfo2_ > 6.283185307) lfo2_ -= 6.283185307;
+
+            double d = readHermite(pre_, pw_, std::max(4.0, pd_));
+            pre_[static_cast<size_t>(pw_)] = static_cast<float>(xi * feed_);
+            pw_ = (pw_ + 1) % preLen;
+            for (size_t k = 0; k < 4; k++) {
+                auto& b = ap_[k];
+                const double r = b[static_cast<size_t>(apW_[k])];
+                const double u = d - 0.62 * r;
+                b[static_cast<size_t>(apW_[k])] = static_cast<float>(u);
+                apW_[k] = (apW_[k] + 1) % static_cast<int>(b.size());
+                d = r + 0.62 * u;
+            }
+
+            for (size_t k = 0; k < 8; k++) {
+                double len = VERB_LINES[k] * scale_ * rate_;
+                if (k == 2) len += depth * std::sin(lfo1_);
+                else if (k == 5) len += depth * std::sin(lfo2_);
+                const double r = readHermite(lines_[k], w_, len);
+                lp_[k] += (r - lp_[k]) * aTone;
+                if (std::fabs(lp_[k]) < 1e-20) lp_[k] = 0;
+                v[k] = lp_[k] * g[k];
+            }
+            for (size_t h = 1; h < 8; h *= 2)
+                for (size_t j = 0; j < 8; j += 2 * h)
+                    for (size_t k = j; k < j + h; k++) {
+                        const double a = v[k], b = v[k + h];
+                        v[k] = a + b;
+                        v[k + h] = a - b;
+                    }
+            for (size_t k = 0; k < 8; k++) lines_[k][static_cast<size_t>(w_)] = static_cast<float>(v[k] * half_ + d * 0.5);
+            w_ = (w_ + 1) % cap;
+
+            const double wet = (lp_[0] - lp_[1] + lp_[2] - lp_[3] + lp_[4] - lp_[5] + lp_[6] - lp_[7]) * 1.1;
+            if (std::fabs(wet) > 1e-5) hold_ = 2048;
+            else if (hold_ > 0) hold_--;
+            y[i] = static_cast<float>(xi + wet * mix);
+        }
+        mix_ = feed_;
+    }
+
+    std::array<std::vector<float>, 8> lines_;
+    std::array<std::vector<float>, 4> ap_;
+    std::array<int, 4> apW_{};
+    std::array<double, 8> lp_{};
+    std::vector<float> pre_;
+    int w_ = 0, pw_ = 0;
+    double scale_ = 0.95, pd_;
+    const double aD_, aFeed_, half_;
+    double feed_ = 0, hold_ = 0, lfo1_ = 0, lfo2_ = 0;
+};
+
 }  // namespace
 
 Pedal::Pedal(double rate, std::vector<std::pair<std::string, float>> params)
@@ -448,7 +550,7 @@ void Pedal::process(const float* in, float* out, int n) {
 
 const std::vector<std::string>& Pedal::types() {
     static const std::vector<std::string> ids = {
-        "comp", "wah", "boost", "overdrive", "fuzz", "volume", "chorus", "phaser", "tremolo", "delay",
+        "comp", "wah", "boost", "overdrive", "fuzz", "volume", "chorus", "phaser", "tremolo", "delay", "reverb",
     };
     return ids;
 }
@@ -464,6 +566,7 @@ std::unique_ptr<Pedal> Pedal::create(const std::string& type, double rate) {
     if (type == "chorus") return std::make_unique<Chorus>(rate);
     if (type == "tremolo") return std::make_unique<Tremolo>(rate);
     if (type == "delay") return std::make_unique<Delay>(rate);
+    if (type == "reverb") return std::make_unique<Reverb>(rate);
     return nullptr;
 }
 

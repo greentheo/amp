@@ -590,7 +590,7 @@ public:
         if (s.startsWith("amp.")) {
             const auto k = s.fromFirstOccurrenceOf("amp.", false, false);
             if (k == "stages") return {ampcore::ControlInfo::Step, 1, 4, 1};
-            if (k == "axis" || k == "distance") return {ampcore::ControlInfo::Knob, 0, 1, 0};
+            if (k == "axis" || k == "distance" || k == "room") return {ampcore::ControlInfo::Knob, 0, 1, 0};
             if (k == "stack") return c;
             if (auto* prm = p_.state.getParameter(k)) {
                 const auto range = p_.state.getParameterRange(k);
@@ -612,10 +612,11 @@ public:
         const juce::String s(id);
         if (s.startsWith("amp.")) {
             const auto k = s.fromFirstOccurrenceOf("amp.", false, false);
-            if (k == "axis" || k == "distance") {
+            if (k == "axis" || k == "distance" || k == "room") {
                 std::lock_guard<std::mutex> lock(p_.settingsLock_);
                 if (p_.pendingCab_.hasProperty(k)) return p_.pendingCab_[juce::Identifier(k)];
-                return p_.cab_[juce::Identifier(k)];
+                // No room in the cab is a dead one.
+                return p_.cab_.hasProperty(k) ? static_cast<double>(p_.cab_[juce::Identifier(k)]) : 0.0;
             }
             auto* v = p_.state.getRawParameterValue(k);
             return v ? v->load() : 0;
@@ -632,7 +633,7 @@ public:
         const juce::String s(id);
         if (s.startsWith("amp.")) {
             const auto k = s.fromFirstOccurrenceOf("amp.", false, false);
-            if (k == "axis" || k == "distance") p_.queueCab(k, v);
+            if (k == "axis" || k == "distance" || k == "room") p_.queueCab(k, v);
             else p_.setKnob(k, v);
             return;
         }

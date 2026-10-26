@@ -35,8 +35,41 @@ uint32_t seedOf(const std::map<std::string, double>& spec, const std::string& sp
     uint32_t h = 2166136261u;
     auto mix = [&](uint32_t x) { h = (h ^ x) * 16777619u; };
     for (unsigned char c : speaker) mix(c);
-    for (const auto& kv : spec) mix(toUint32Bits(jsRound(kv.second * 1000)));
+    for (const auto& kv : spec)
+        if (kv.first != "room") mix(toUint32Bits(jsRound(kv.second * 1000)));
     return h;
+}
+
+// REFLECTIONS in cab.js: when each comes back in a small room, and how hard.
+const double REFLECTIONS[8][2] = {
+    {0.0031, -0.55}, {0.0053, 0.48}, {0.0079, -0.42}, {0.0094, 0.37},
+    {0.0127, -0.3}, {0.0151, 0.27}, {0.0196, -0.22}, {0.0233, 0.18},
+};
+
+/** addRoom() in cab.js: the room around the cab, into the impulse. */
+void addRoom(std::vector<float>& d, double rate, double room, double distance, double rt60) {
+    const int len = static_cast<int>(d.size());
+    const double size = 0.5 + room;
+    const double level = room * (0.5 + distance);
+    std::vector<double> r(static_cast<size_t>(len), 0.0);
+    for (const auto& refl : REFLECTIONS) {
+        const int i = static_cast<int>(jsRound(refl[0] * size * rate));
+        if (i < len) r[static_cast<size_t>(i)] += refl[1] * level;
+    }
+    Mulberry32 rnd{0x400f5};
+    const double onset = REFLECTIONS[0][0] * size;
+    for (int i = 1; i < len; i++) {
+        const double t = i / rate;
+        if (t < onset) continue;
+        const double swell = std::min(1.0, (t - onset) / (0.02 * size));
+        r[static_cast<size_t>(i)] += (rnd.next() * 2 - 1) * 0.16 * level * swell * std::exp((-6.9 * t) / rt60);
+    }
+    const double k = 1 - std::exp((-2 * M_PI * 3500) / rate);
+    double lp = 0;
+    for (int i = 0; i < len; i++) {
+        lp += (r[static_cast<size_t>(i)] - lp) * k;
+        d[static_cast<size_t>(i)] = static_cast<float>(d[static_cast<size_t>(i)] + lp);
+    }
 }
 
 }  // namespace
@@ -51,8 +84,11 @@ std::vector<float> renderCab(double rate, const CabOpts& opts) {
     auto get = [&](const char* k) { return spec.at(k); };
     const double axis = opts.num.count("axis") ? opts.num.at("axis") : 0.6;
     const double distance = opts.num.count("distance") ? opts.num.at("distance") : 0.25;
+    const double room = opts.num.count("room") ? opts.num.at("room") : 0;
 
-    const int len = static_cast<int>(jsRound(rate * 0.09));
+    // A room makes the response longer: as long as its tail takes to die.
+    const double rt60 = 0.2 + 0.8 * room;
+    const int len = static_cast<int>(jsRound(rate * (room > 0 ? 0.09 + rt60 : 0.09)));
     std::vector<float> d(len, 0.0f);
     d[0] = 1;
     const double bounces[5][2] = {{0.0011, -0.42}, {0.0023, 0.26}, {0.0041, -0.18}, {0.0067, 0.12}, {0.011, -0.07}};
@@ -64,6 +100,7 @@ std::vector<float> renderCab(double rate, const CabOpts& opts) {
     for (int i = 1; i < len; i++) {
         d[i] = static_cast<float>(d[i] + (rnd.next() * 2 - 1) * 0.06 * std::exp((-i / rate) * 420));
     }
+    if (room > 0) addRoom(d, rate, room, distance, rt60);
 
     Biquad hp(Biquad::Highpass, rate, get("hp"), get("hpQ"));
     // A count other than the cab's own: a bigger box with more cone. At its

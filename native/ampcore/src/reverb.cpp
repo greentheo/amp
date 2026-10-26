@@ -8,15 +8,26 @@
 namespace ampcore {
 
 std::vector<std::vector<float>> springIR(double rate) {
-    const int len = static_cast<int>(jsRound(rate * 1.4));
-    std::vector<std::vector<float>> ch(2, std::vector<float>(len));
+    // springIR() in engine.js, which says why it is shaped the way it is.
+    const int len = static_cast<int>(jsRound(rate * 1.6));
+    std::vector<std::vector<float>> ch(2, std::vector<float>(static_cast<size_t>(len)));
     Mulberry32 rnd{0x5eed5};
-    for (auto& d : ch) {
+    const double kLow = 1 - std::exp((-2 * M_PI * 150) / rate);
+    for (size_t c = 0; c < 2; c++) {
+        auto& d = ch[c];
+        const double trip = c == 0 ? 0.0291 : 0.0367;
+        double lp1 = 0, lp2 = 0, low = 0;
         for (int i = 0; i < len; i++) {
             const double t = i / rate;
-            const double env = std::exp(-t * 4.2);
-            d[i] = static_cast<float>((rnd.next() * 2 - 1) * env * 0.5
-                + std::sin(2 * M_PI * (1400 - 900 * std::min(1.0, t)) * t) * env * 0.08);
+            const double env = std::exp(-t * 3.6);
+            const double depth = 0.6 * std::exp(-t * 4);
+            const double echo = 1 - depth + depth * 2.2 * std::exp(-(std::fmod(t, trip) / trip) * 7);
+            const double n = (rnd.next() * 2 - 1) * env * echo;
+            const double k = 1 - std::exp((-2 * M_PI * (1800 + 3200 * std::exp(-t * 2.5))) / rate);
+            lp1 += (n - lp1) * k;
+            lp2 += (lp1 - lp2) * k;
+            low += (lp2 - low) * kLow;
+            d[static_cast<size_t>(i)] = static_cast<float>(lp2 - low);
         }
     }
     return ch;

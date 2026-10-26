@@ -27,7 +27,9 @@ of that fizz lives above 5 kHz where a guitar speaker simply cannot reproduce
 it. The cab is what makes distortion listenable. It is modelled here as a
 rendered impulse response — an impulse plus a few cabinet panel reflections
 pushed through filters in an `OfflineAudioContext` — with Axis and Distance
-controls, and you can drop a measured `.wav` IR over the top at any time.
+for the mic and Room for the space around it (first reflections and a dark
+diffuse tail, heard through the speaker like everything else), and you can
+drop a measured `.wav` IR over the top at any time.
 
 Whether the modelled cab is doing that job is now a measurement rather than
 a belief, and the first answer was no: against a reference cab it was +18 to
@@ -215,8 +217,8 @@ reverb, the speaker down-mix at the end.
 |---|---|
 | tone stack | every coefficient identical |
 | amp (gate, 4x preamp, power amp) | −283 to −288 dB, 91–96% of samples bit-identical |
-| all ten pedals, footswitch transitions included | bit-identical |
-| cab impulse response | −141 to −148 dB |
+| all eleven pedals, footswitch transitions included | bit-identical |
+| cab impulse response, with or without Room | −141 to −148 dB |
 | spring reverb impulse response | bit-identical |
 | convolution: cab / reverb | −139 / −128 dB |
 | full chain, four settings | −130 to −138 dB |

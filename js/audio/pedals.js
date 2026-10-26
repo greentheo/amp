@@ -140,6 +140,18 @@ registerPedalType({
   ],
 });
 
+registerPedalType({
+  id: 'reverb', name: 'Reverb', lane: 'post', colour: '#4f6b8f', processor: 'pedal-reverb', trails: true,
+  blurb: 'A room to a hall. Pre-delay lets the note speak first. Trails when off.',
+  params: [
+    { k: 'mix', label: 'Mix', def: 0.3 },
+    { k: 'decay', label: 'Decay', def: 0.45, fmt: (v) => `${(0.25 * Math.pow(40, v)).toFixed(1)} s` },
+    { k: 'tone', label: 'Tone', def: 0.5, fmt: hz(1200, 10) },
+    { k: 'size', label: 'Size', def: 0.6 },
+    { k: 'predelay', label: 'Pre-delay', def: 0.2, fmt: (v) => `${Math.round(150 * v)} ms` },
+  ],
+});
+
 /* ---------------- the board ---------------- */
 
 let nextId = 1;

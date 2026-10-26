@@ -14,8 +14,8 @@
 
 namespace ampcore {
 
-/** springIR() in engine.js: 1.4 s of seeded, decaying noise and a falling
- *  chirp, two channels drawn from one generator. */
+/** springIR() in engine.js: 1.6 s of seeded, band-limited, darkening noise
+ *  with a spring's echoes, two channels drawn from one generator. */
 std::vector<std::vector<float>> springIR(double rate);
 
 /** The gain ConvolverNode applies to an impulse response when normalize is

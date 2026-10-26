@@ -49,6 +49,7 @@ const KNOBS = {
   cabknobs: [
     { k: 'axis',     label: 'Axis',     min: 0, max: 1, def: 0.6, cab: true },
     { k: 'distance', label: 'Distance', min: 0, max: 1, def: 0.25, cab: true },
+    { k: 'room',     label: 'Room',     min: 0, max: 1, def: 0, cab: true },
     { k: 'cabMix',   label: 'Cab',      min: 0, max: 1, def: 1, bus: true },
   ],
 };
@@ -114,7 +115,7 @@ function push(spec) {
     // it back would count as the page touching the knob.
     const silent = engine.native && engine.quiet;
     cabTimer = setTimeout(async () => {
-      const send = () => engine.setCab({ axis: values.axis, distance: values.distance });
+      const send = () => engine.setCab({ axis: values.axis, distance: values.distance, room: values.room });
       await (silent ? engine.quietly(send) : send());
       drawCab();
       $('ir-note').textContent = '';
@@ -293,6 +294,21 @@ window.amp = {
       if (!res.ok) throw new Error(`save failed: ${res.status}`);
     }
     return `${file}.wav and ${file}.json`;
+  },
+
+  /**
+   * The browser half of a chain test again, from the settings already saved
+   * beside it: for when the browser's sound has changed on purpose and the
+   * reference has to follow. The live panel is not touched.
+   */
+  async rerenderChain(name) {
+    const file = name.replace(/[^A-Za-z0-9._-]/g, '-');
+    const res = await fetch(`calibration/${file}.json`);
+    if (!res.ok) throw new Error(`no calibration/${file}.json`);
+    const out = await engine.renderStimulus(await amp._stimulus(), { settings: await res.json() });
+    const put = await fetch(`calibration/${file}.wav`, { method: 'PUT', body: new Blob([encodeWavFloat(out)], { type: 'audio/wav' }) });
+    if (!put.ok) throw new Error(`save failed: ${put.status}`);
+    return `${file}.wav`;
   },
 
   _cached: null,

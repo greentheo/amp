@@ -1,8 +1,8 @@
-// The ten pedals, ported from js/audio/pedal-worklet.js.
+// The eleven pedals, ported from js/audio/pedal-worklet.js.
 //
 // Same contract as the worklets: every knob is 0..1 and each pedal maps it
 // to its own range, bypass is a 6 ms crossfade that settles into a straight
-// copy, and the delay rings out when it is switched off. The type ids are
+// copy, and the delay and the reverb ring out when they are switched off. The type ids are
 // the board's ("overdrive", "delay", ...), so a saved board means the same
 // pedals here as in the browser.
 //
@@ -25,7 +25,7 @@ public:
     /** A pedal by its board type id; null for one this build does not have. */
     static std::unique_ptr<Pedal> create(const std::string& type, double rate);
 
-    /** The ten built-in type ids, in the order pedals.js registers them. */
+    /** The eleven built-in type ids, in the order pedals.js registers them. */
     static const std::vector<std::string>& types();
 
     /** A knob (0..1), or "on" (0 or 1), held as float the way an AudioParam

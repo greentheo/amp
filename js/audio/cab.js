@@ -31,14 +31,15 @@ function rng(seed) {
   };
 }
 
-/** A stable seed from whatever defines this cab. */
+/** A stable seed from whatever defines this cab. The room is not the cab,
+ *  so it stays out: turning Room up and back down leaves the same speaker. */
 function seedOf(spec, speaker) {
   let h = 2166136261;
   const mix = (x) => { h = Math.imul(h ^ x, 16777619) >>> 0; };
   for (let i = 0; i < speaker.length; i++) mix(speaker.charCodeAt(i));
   for (const k of Object.keys(spec).sort()) {
     const v = spec[k];
-    if (typeof v !== 'number') continue;
+    if (typeof v !== 'number' || k === 'room') continue;
     mix(Math.round(v * 1000));
   }
   return h;
@@ -80,19 +81,64 @@ export const CAB_SHAPE = {
   tiltHz: 931,
 };
 
+// The room's first reflections — floor, walls, ceiling, back wall — at a
+// small room's distances in seconds, and how strongly each comes back. They
+// stretch with the room.
+const REFLECTIONS = [
+  [0.0031, -0.55], [0.0053, 0.48], [0.0079, -0.42], [0.0094, 0.37],
+  [0.0127, -0.3], [0.0151, 0.27], [0.0196, -0.22], [0.0233, 0.18],
+];
+
+/**
+ * The room around the cab, added to the impulse before the cab's filters so
+ * it is heard through the speaker like everything else. Room 0 is a mic on
+ * the grille in a dead studio, and adds nothing; 1 is a big live room. The
+ * first reflections come back at the room's size, then a diffuse tail dies
+ * away over `rt60`, darker than the direct sound as air and soft furnishings
+ * take the top. Further back with the mic, more of it.
+ */
+function addRoom(d, rate, room, distance, rt60) {
+  const len = d.length;
+  const size = 0.5 + room;
+  const level = room * (0.5 + distance);
+  const r = new Float64Array(len);
+  for (const [t, g] of REFLECTIONS) {
+    const i = Math.round(t * size * rate);
+    if (i < len) r[i] += g * level;
+  }
+  // The tail: seeded on its own, so the room never changes the speaker.
+  const rand = rng(0x400f5);
+  const onset = REFLECTIONS[0][0] * size;
+  for (let i = 1; i < len; i++) {
+    const t = i / rate;
+    if (t < onset) continue;
+    const swell = Math.min(1, (t - onset) / (0.02 * size));
+    r[i] += (rand() * 2 - 1) * 0.16 * level * swell * Math.exp((-6.9 * t) / rt60);
+  }
+  const k = 1 - Math.exp((-2 * Math.PI * 3500) / rate);
+  let lp = 0;
+  for (let i = 0; i < len; i++) {
+    lp += (r[i] - lp) * k;
+    d[i] += lp;
+  }
+}
+
 /**
  * @param {BaseAudioContext} ctx only for its sample rate
  * @param {object} o speaker id, axis 0..1 (dark to bright), distance 0..1,
- *   plus any SPEAKERS field or CAB_SHAPE field to override
+ *   room 0..1 (none to a big live room), plus any SPEAKERS field or
+ *   CAB_SHAPE field to override
  * @returns {Promise<AudioBuffer>}
  */
 export async function renderCab(ctx, opts = {}) {
-  const { speaker = 'v30', axis = 0.6, distance = 0.25 } = opts;
+  const { speaker = 'v30', axis = 0.6, distance = 0.25, room = 0 } = opts;
   // Overrides land on top of the speaker's own values, so a fit can move one
   // number without restating the table.
   const spec = { ...CAB_SHAPE, ...(SPEAKERS[speaker] || SPEAKERS.v30), ...opts };
   const rate = ctx.sampleRate;
-  const len = Math.round(rate * 0.09);
+  // A room makes the response longer: as long as its tail takes to die.
+  const rt60 = 0.2 + 0.8 * room;
+  const len = Math.round(rate * (room > 0 ? 0.09 + rt60 : 0.09));
   const off = new OfflineAudioContext(1, len, rate);
 
   // The impulse, plus the panel bounces that give a cab its boxiness. Further
@@ -113,6 +159,7 @@ export async function renderCab(ctx, opts = {}) {
   for (let i = 1; i < len; i++) {
     d[i] += (rand() * 2 - 1) * 0.06 * Math.exp((-i / rate) * 420);
   }
+  if (room > 0) addRoom(d, rate, room, distance, rt60);
 
   const node = off.createBufferSource();
   node.buffer = src;

@@ -318,6 +318,8 @@ export class Engine {
    * second or two.
    *
    * @param {AudioBuffer|ArrayBuffer} input the stimulus
+   * @param {object} [opts] pedals: false to leave the board out; settings:
+   *   a chainSettings() object to render instead of the live one
    * @returns {Promise<AudioBuffer>} the amp's output
    */
   async renderStimulus(input, opts = {}) {
@@ -353,7 +355,7 @@ export class Engine {
     // signal through bit for bit, so calibration renders are unaffected
     // unless a pedal is actually on — opts.pedals:false leaves it out
     // entirely when that matters.
-    const s = this.chainSettings();
+    const s = opts.settings || this.chainSettings();
     if (opts.pedals !== false) this.buildPedals(off, g, s.board);
 
     for (const [name, value] of Object.entries(s.amp)) {
@@ -792,17 +794,29 @@ export class Engine {
 }
 
 /**
- * A short bright reverb: an amp's spring tank, roughly.
+ * The amp's spring tank, as an impulse response.
  *
  * Seeded noise, not Math.random(). Unseeded, every build of the chain drew
  * a different tank, so two renders of identical settings differed by up to
  * 0.04 — enough to make "do these pedals change anything when they are
  * off?" unanswerable, because the answer was always yes. Same fix, same
  * reason, as the cab's cone noise.
+ *
+ * What makes it a spring rather than a room: the band — a tank passes
+ * little below 150 Hz or above about 5 kHz, and the top dies first, so the
+ * tail darkens as it goes — and the echoes. A spring sends a sound back as
+ * a train of smeared repeats, one per trip along it and back, which are
+ * clear at first and blur into the wash. Each channel is its own spring of
+ * a slightly different length, so the two sides are uncorrelated.
+ *
+ * This used to add a "chirp", a sine whose phase was written (1400 - 900t)t.
+ * That is not a spring's dispersion, and its pitch actually swept from
+ * 1400 Hz down through zero and back up: a whistle falling through every
+ * tail, heard as a "wow" whenever you stopped playing.
  */
 export function springIR(ctx) {
   const rate = ctx.sampleRate;
-  const len = Math.round(rate * 1.4);
+  const len = Math.round(rate * 1.6);
   const buf = ctx.createBuffer(2, len, rate);
   let a = 0x5eed5;
   const rand = () => {
@@ -811,14 +825,25 @@ export function springIR(ctx) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  const kLow = 1 - Math.exp((-2 * Math.PI * 150) / rate);
   for (let c = 0; c < 2; c++) {
     const d = buf.getChannelData(c);
+    const trip = c === 0 ? 0.0291 : 0.0367;
+    let lp1 = 0, lp2 = 0, low = 0;
     for (let i = 0; i < len; i++) {
       const t = i / rate;
-      const env = Math.exp(-t * 4.2);
-      // The chirp is what makes a spring sound like a spring.
-      d[i] = (rand() * 2 - 1) * env * 0.5
-        + Math.sin(2 * Math.PI * (1400 - 900 * Math.min(1, t)) * t) * env * 0.08;
+      // About 1.9 s to fall 60 dB.
+      const env = Math.exp(-t * 3.6);
+      // The echoes: a burst at the start of each trip, smearing out.
+      const depth = 0.6 * Math.exp(-t * 4);
+      const echo = 1 - depth + depth * 2.2 * Math.exp(-((t % trip) / trip) * 7);
+      const n = (rand() * 2 - 1) * env * echo;
+      // Darker as it goes: the corner falls from 5 kHz toward 1.8 kHz.
+      const k = 1 - Math.exp((-2 * Math.PI * (1800 + 3200 * Math.exp(-t * 2.5))) / rate);
+      lp1 += (n - lp1) * k;
+      lp2 += (lp1 - lp2) * k;
+      low += (lp2 - low) * kLow;
+      d[i] = lp2 - low;
     }
   }
   return buf;
