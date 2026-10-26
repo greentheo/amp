@@ -10,6 +10,8 @@ import { fitCab, responseOf, scoreAgainst } from './audio/cabfit.js';
 import { controls } from './controls.js';
 import { makeKnob, showCatching } from './ui/knob.js';
 import { initBoard, loadBoard } from './ui/board.js';
+import { setVoice } from './ui/amplook.js';
+import { mountCabPictures } from './ui/cabpic.js';
 import { Midi, sourceText } from './midi.js';
 import { NativeMidi } from './native-midi.js';
 
@@ -844,7 +846,8 @@ function frame() {
 function wireSelects() {
   for (const [id, s] of Object.entries(STACKS)) $('stack').add(new Option(s.name, id));
   $('stack').value = 'jcm800';
-  $('stack').addEventListener('change', (e) => engine.setTone({ stack: e.target.value }));
+  $('stack').addEventListener('change', (e) => { setVoice(e.target.value); engine.setTone({ stack: e.target.value }); });
+  setVoice($('stack').value);
 
   for (const [id, s] of Object.entries(SPEAKERS)) $('speaker').add(new Option(s.name, id));
   $('speaker').value = 'v30';
@@ -1069,6 +1072,7 @@ function showAudio(a) {
 // calibration controls give way to the app's own audio settings.
 const nativeState = engine.native ? engine.connect() : null;
 buildKnobs();
+mountCabPictures($('cabpics'));
 wireBoard();
 wireSelects();
 if (!engine.native) {

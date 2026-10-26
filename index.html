@@ -77,16 +77,13 @@
   <button id="btn-midi-jump" class="mini mbtn" title="MIDI"><span id="midi-dot" class="mdot"></span>MIDI</button>
 </header>
 
-<main class="app">
+<main class="app" id="app" data-voice="jcm800">
 
-  <section class="row">
-    <div class="plate wide boardplate">
-      <div class="badge">PEDALBOARD</div>
-      <div id="pedalboard"></div>
-    </div>
-  </section>
-
-  <section class="head">
+  <!-- The amp takes the look of the tone stack it is running: colours and
+       an original nameplate, no one's logo. See js/ui/amplook.js. -->
+  <section class="amp">
+    <div class="nameplate"><span class="np-name" id="np-name"></span><span class="np-after" id="np-after"></span></div>
+    <div class="head">
     <div class="plate">
       <div class="badge">PREAMP</div>
       <div class="knobs" id="preamp"></div>
@@ -107,12 +104,17 @@
       <div class="badge">POWER</div>
       <div class="knobs" id="power"></div>
     </div>
+    </div>
   </section>
 
   <section class="row">
-    <div class="plate wide">
+    <div class="plate wide grille">
+      <div class="cabface">
       <div class="badge">CABINET</div>
-      <div class="knobs" id="cabknobs"></div>
+      <div class="cabtop">
+        <div class="knobs" id="cabknobs"></div>
+        <div class="cabpics" id="cabpics"></div>
+      </div>
       <div class="cabrow">
         <label class="sel">Speaker<select id="speaker"></select></label>
         <button class="mini web-only" id="btn-ir">Load an IR&hellip;</button>
@@ -120,6 +122,7 @@
         <span class="note" id="ir-note">generated — no asset to download</span>
       </div>
       <canvas id="cabcurve" height="90"></canvas>
+      </div>
     </div>
 
     <div class="plate web-only">
@@ -134,6 +137,13 @@
         <p class="note">Karplus-Strong plucked strings, so there is something
           to hear with nothing plugged in.</p>
       </div>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="plate wide boardplate">
+      <div class="badge">PEDALBOARD</div>
+      <div id="pedalboard"></div>
     </div>
   </section>
 

@@ -317,6 +317,12 @@ node tools/test-tonestack.mjs
 * `faustlibraries/tonestacks.lib`, from Guitarix — the same analysis in code,
   and the schematic component values.
 
+Fender, Bassman, Twin, Marshall, JCM800, JTM45, Vox, AC30, Soldano and SLO
+are trademarks of their owners. Amp names them only to say which circuit
+each tone stack is taken from, and is not affiliated with or endorsed by
+any of them. The panel looks are colours and type of its own, not anyone's
+logo or artwork.
+
 ## License
 
 Copyright © 2026 Theodore Van Rooy.

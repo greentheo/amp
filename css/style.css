@@ -75,15 +75,103 @@ body{background:var(--bg);color:var(--ink);
 .knob:hover{background:#2b231c}
 .dial{--fill:0;width:56px;height:56px;border-radius:50%;position:relative;
   background:
-    conic-gradient(from 215deg, var(--accent) calc(var(--fill) * 290deg), #2e241c 0 290deg, transparent 0),
-    radial-gradient(circle at 50% 38%, #4a3a2d 0%, #221a14 70%);
+    conic-gradient(from 215deg, var(--accent) calc(var(--fill) * 290deg), var(--dial-track, #2e241c) 0 290deg, transparent 0),
+    radial-gradient(circle at 50% 38%, var(--face-hi, #4a3a2d) 0%, var(--face-lo, #221a14) 70%);
   display:grid;place-items:center;
   box-shadow:0 2px 6px rgba(0,0,0,.5), inset 0 0 0 4px var(--dial-bg)}
-.dial i{position:absolute;width:2px;height:15px;background:var(--ink);border-radius:2px;
+.dial i{position:absolute;width:2px;height:15px;background:var(--needle, var(--ink));border-radius:2px;
   top:9px;transform-origin:50% 19px;
   transform:rotate(calc(-145deg + var(--fill) * 290deg))}
 .knob .k{font:10px ui-monospace,monospace;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}
 .knob .v{font:11px ui-monospace,monospace;color:var(--ink)}
+
+/* ---------- the amp's looks ---------- */
+/* One per tone stack (js/ui/amplook.js): the colours and finish of the kind
+   of amp each comes from, with a nameplate of our own. Flat on purpose: a
+   digital panel in those colours, not a photograph of the hardware. The
+   variables are scoped to the amp and the cab's grille, so the pedals and
+   the MIDI panel keep the house colours. The knobs stay dark with a bright
+   arc in every look: a knob that matches its panel stops reading as one. */
+.amp{background:var(--case);border:1px solid var(--case-edge);border-radius:14px;
+  padding:8px 12px 12px;box-shadow:0 10px 26px rgba(0,0,0,.4)}
+.amp .head{gap:12px}
+.nameplate{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 14px;padding:6px 6px 12px}
+.np-name{font:var(--np-font);letter-spacing:var(--np-track,.04em);color:var(--np-ink);
+  text-transform:var(--np-case,none)}
+.np-after{font:10px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--np-sub)}
+.amp .plate{background:var(--panel);border:1px solid var(--panel-edge);box-shadow:none;color:var(--ink)}
+.amp .badge,.amp .sel,.amp .knob .k{color:var(--dim)}
+.amp .knob .v{color:var(--ink)}
+.amp .knob:hover{background:var(--hover)}
+.amp select{background:var(--field);color:var(--ink);border-color:var(--panel-edge)}
+
+.app[data-voice="tweed"] .amp{
+  --case:repeating-linear-gradient(45deg,#dcc08a 0 2px,#c3a167 2px 4px),
+    repeating-linear-gradient(-45deg,rgba(80,52,20,.22) 0 1px,transparent 1px 5px),#caa96f;
+  --case-edge:#7a5a2c;--panel:#efe7d6;--panel-edge:#cdb88f;--field:#f8f3e7;--hover:rgba(0,0,0,.05);
+  --ink:#2b1d10;--dim:#6e5639;--accent:#e2b05c;--dial-track:#3a2c1f;
+  --face-hi:#4a3a2d;--face-lo:#1c140e;--needle:#f3e7cf;
+  --np-font:italic 700 26px/1.1 Georgia,"Times New Roman",serif;--np-ink:#3a2410;--np-sub:#5a4020}
+.app[data-voice="blackface"] .amp{
+  --case:#121212;--case-edge:#2a2a2a;--panel:#1b1b1c;--panel-edge:#303033;--field:#101112;
+  --hover:rgba(255,255,255,.04);--ink:#f3f3f3;--dim:#a6abb2;--accent:#9fc0e0;--dial-track:#2c2f33;
+  --face-hi:#3d3f43;--face-lo:#121314;--needle:#fff;
+  --np-font:italic 800 26px/1.1 "Avenir Next","Helvetica Neue",sans-serif;--np-ink:#f5f5f5;--np-sub:#8d9399}
+.app[data-voice^="plexi"] .amp{
+  --case:#141312;--case-edge:#e8e2d4;--panel:#c9a44e;--panel-edge:#9d7d33;--field:#dcbc66;
+  --hover:rgba(0,0,0,.06);--ink:#17110a;--dim:#4b3a18;--accent:#f3d98f;--dial-track:#2e2719;
+  --face-hi:#3a3530;--face-lo:#0d0c0b;--needle:#e9c86e;
+  --np-font:800 24px/1.1 "Avenir Next Condensed","Futura","Helvetica Neue",sans-serif;--np-case:uppercase;
+  --np-track:.12em;--np-ink:#f4efe6;--np-sub:#b9b1a3;border-width:2px}
+.app[data-voice="plexi45"] .amp{--panel:#dcc27d;--field:#e9d394}
+.app[data-voice="copper"] .amp{
+  --case:#1b1714;--case-edge:#3a2e24;--panel:#b9773f;--panel-edge:#8a5428;--field:#cc8a52;
+  --hover:rgba(0,0,0,.07);--ink:#1d1007;--dim:#4a2a12;--accent:#f2e7cb;--dial-track:#3a2212;
+  --face-hi:#4a3426;--face-lo:#1c120b;--needle:#f2e7cb;
+  --np-font:600 24px/1.1 Baskerville,Georgia,serif;--np-case:uppercase;--np-track:.2em;
+  --np-ink:#e3c27d;--np-sub:#a58f6c}
+.app[data-voice="chrome"] .amp{
+  --case:#0f0f10;--case-edge:#333;--panel:#c7ccd1;--panel-edge:#8f959b;--field:#dde1e5;
+  --hover:rgba(0,0,0,.05);--ink:#0f1113;--dim:#3e444a;--accent:#ff4d55;--dial-track:#2a2d30;
+  --face-hi:#3b3d40;--face-lo:#0b0b0c;--needle:#fff;
+  --np-font:italic 800 24px/1.1 "Avenir Next","Helvetica Neue",sans-serif;--np-case:uppercase;
+  --np-track:.06em;--np-ink:#d8dde2;--np-sub:#8b9197}
+
+/* ---------- the cabinet: grille cloth, controls set into it ---------- */
+.grille{padding:16px;background:var(--cloth,#2a2420);border-color:rgba(0,0,0,.5)}
+.app[data-voice="tweed"] .grille{--cloth:repeating-linear-gradient(90deg,#b8945c 0 2px,#a5814b 2px 4px),
+  repeating-linear-gradient(0deg,rgba(60,35,10,.28) 0 1px,transparent 1px 4px),#b08d55}
+.app[data-voice="blackface"] .grille{--cloth:repeating-linear-gradient(0deg,#aeb2b7 0 1px,#8b9096 1px 3px),
+  repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 1px,transparent 1px 3px),#9a9ea3}
+.app[data-voice^="plexi"] .grille{--cloth:repeating-linear-gradient(45deg,#4c4946 0 2px,#2a2826 2px 4px),
+  repeating-linear-gradient(-45deg,rgba(210,205,195,.14) 0 1px,transparent 1px 5px),#333130}
+.app[data-voice="copper"] .grille{--cloth:repeating-linear-gradient(45deg,#5d3f27 0 9px,#46301e 9px 18px),
+  repeating-linear-gradient(-45deg,rgba(0,0,0,.28) 0 9px,transparent 9px 18px),#4e3522}
+.app[data-voice="chrome"] .grille{--cloth:repeating-linear-gradient(45deg,#262626 0 2px,#151515 2px 4px),#1c1c1c}
+.cabface{background:rgba(14,11,9,.88);border:1px solid rgba(255,255,255,.06);border-radius:9px;
+  padding:12px 14px 14px}
+.cabtop{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.cabtop .knobs{flex:1 1 230px}
+.cabpics{display:flex;gap:10px;flex:2 1 360px}
+.cabpic{flex:23 1 0;min-width:0;height:auto;background:var(--dial-bg);border-radius:8px}
+.cabpic + .cabpic{flex:13 1 0}
+.cabpic .room{stroke:#3a3029;stroke-width:1.5;stroke-dasharray:3 4}
+.cabpic .bounce{fill:none;stroke:var(--accent);stroke-width:1.2;stroke-dasharray:2 3}
+.cabpic .mag{fill:#4a3d33}
+.cabpic .cone{fill:#2c241e;stroke:#6b5b4c;stroke-width:1.5}
+.cabpic .baffle{stroke:#6b5b4c;stroke-width:2}
+.cabpic .cap{fill:none;stroke:#a08d79;stroke-width:2}
+.cabpic .cloth{stroke:#4a3d33;stroke-width:3;stroke-dasharray:2 2}
+.cabpic .aim{stroke:var(--accent);stroke-width:1.2;stroke-dasharray:4 3;opacity:.8}
+.cabpic .spot{fill:var(--accent)}
+.cabpic .mic .head{fill:#d9cbb8}
+.cabpic .mic .body{fill:#8a7a6a}
+.cabpic .mic .cable{stroke:#5a4b3e;stroke-width:2}
+.cabpic .cap-text{font:9px ui-monospace,monospace;fill:var(--faint);letter-spacing:.06em}
+.cabpic .node{fill:var(--dim)}
+.cabpic .path{fill:none;stroke:var(--accent);stroke-linecap:round;transition:stroke-width .08s,opacity .08s}
+.cabpic .spk{fill:var(--ink)}
+.cabpic .pct{font:600 11px ui-monospace,monospace;fill:var(--ink)}
 
 /* ---------- controls ---------- */
 .sel{display:flex;flex-direction:column;gap:4px;margin-top:12px;
