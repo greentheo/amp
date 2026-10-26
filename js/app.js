@@ -41,7 +41,7 @@ const KNOBS = {
     { k: 'presence',  label: 'Presence', min: 0, max: 1, def: 0.3 },
     { k: 'sag',       label: 'Sag',      min: 0, max: 1, def: 0.3 },
     { k: 'masterVol', label: 'Volume',   min: 0, max: 1, def: 0.5 },
-    { k: 'gate',      label: 'Gate',     min: 0, max: 1, def: 0.12 },
+    { k: 'gate',      label: 'Gate',     min: 0, max: 1, def: 0 },
     { k: 'reverb',    label: 'Reverb',   min: 0, max: 1, def: 0.12, bus: true },
     { k: 'master',    label: 'Master',   min: 0, max: 1, def: 0.8, bus: true },
   ],

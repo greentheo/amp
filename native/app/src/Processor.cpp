@@ -27,7 +27,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout layout() {
     knob("presence", "Presence", 0, 1, 0.3f);
     knob("sag", "Sag", 0, 1, 0.3f);
     knob("masterVol", "Volume", 0, 1, 0.5f);
-    knob("gate", "Gate", 0, 1, 0.12f);
+    knob("gate", "Gate", 0, 1, 0);
     knob("reverb", "Reverb", 0, 1, 0.12f);
     knob("master", "Master", 0, 1, 0.8f);
     knob("cabMix", "Cab", 0, 1, 1);
