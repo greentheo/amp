@@ -65,10 +65,16 @@ AmpEditor::AmpEditor(AmpProcessor& p)
     web_.goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
     if (auto* h = holder()) h->deviceManager.addChangeListener(this);
     startTimerHz(30);
+    // The MIDI map's news — learned, armed, a knob it moved — for the page.
+    proc_.setMidiSink([this](const juce::var& batch) {
+        if (verbose_) log("midi: " + juce::JSON::toString(batch, true));
+        web_.emitEventIfBrowserIsVisible("midi", batch);
+    });
     log("editor open, serving " + root_.getFullPathName());
 }
 
 AmpEditor::~AmpEditor() {
+    proc_.setMidiSink(nullptr);
     stopTimer();
     if (auto* h = holder()) h->deviceManager.removeChangeListener(this);
 }
@@ -99,22 +105,63 @@ void AmpEditor::handle(const juce::var& m) {
         web_.emitEventIfBrowserIsVisible("state", event({{"settings", proc_.settings()}, {"audio", audioInfo()}}));
     } else if (type == "set") {
         proc_.setKnob(m["name"].toString(), m["value"]);
+        proc_.midiTouched("amp." + m["name"].toString());
     } else if (type == "tone") {
         proc_.setTone(m);
+        for (const char* k : {"bass", "mid", "treble"})
+            if (m.hasProperty(k)) proc_.midiTouched(juce::String("amp.") + k);
     } else if (type == "cab") {
         proc_.setCab(m["opts"]);
+        for (const char* k : {"axis", "distance"})
+            if (m["opts"].hasProperty(k)) proc_.midiTouched(juce::String("amp.") + k);
     } else if (type == "board") {
         proc_.setBoard(m["board"]);
     } else if (type == "pedal") {
         proc_.setPedalValue(m["uid"].toString(), m["k"].toString(), m["v"]);
+        proc_.midiTouched("pedal." + m["uid"].toString() + "." + m["k"].toString());
     } else if (type == "pedalOn") {
         proc_.setPedalOn(m["uid"].toString(), m["on"]);
+        proc_.midiTouched("pedal." + m["uid"].toString() + ".on");
     } else if (type == "voicing") {
         proc_.setVoicing(m["v"]);
     } else if (type == "panic") {
         proc_.panic();
     } else if (type == "audioSettings") {
         if (auto* h = holder()) h->showAudioSettingsDialog();
+    } else if (type == "midiArm") {
+        proc_.midiArm(m["id"].toString());
+    } else if (type == "midiDisarm") {
+        proc_.midiDisarm();
+    } else if (type == "midiUnbind") {
+        proc_.midiUnbind(m["id"].toString());
+    } else if (type == "midiDrop") {
+        proc_.midiDrop(m["prefix"].toString());
+    } else if (type == "midiClear") {
+        proc_.midiClear();
+    } else if (type == "midiBindings") {
+        proc_.midiSetBindings(m["bindings"]);
+    } else if (type == "midiRescan") {
+        proc_.midiRescan();
+    } else if (type == "midiImport") {
+        chooser_ = std::make_unique<juce::FileChooser>("Load a MIDI map", juce::File(), "*.json");
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this](const juce::FileChooser& fc) {
+                                  const auto f = fc.getResult();
+                                  if (!f.existsAsFile()) return;
+                                  const auto why = proc_.midiImport(f.loadFileAsString());
+                                  note(why.isEmpty() ? "Loaded " + f.getFileName() + "." : "Could not load that map: " + why);
+                              });
+    } else if (type == "midiExport") {
+        const auto name = "amp-midi-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M") + ".json";
+        chooser_ = std::make_unique<juce::FileChooser>(
+            "Save the MIDI map", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(name), "*.json");
+        chooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this](const juce::FileChooser& fc) {
+                                  const auto f = fc.getResult();
+                                  if (f == juce::File()) return;
+                                  note(f.replaceWithText(proc_.midiExport()) ? "Saved " + f.getFileName() + "."
+                                                                             : "Could not save " + f.getFileName() + ".");
+                              });
     } else if (type == "log") {
         log("page " + m["level"].toString() + ": " + m["text"].toString());
     }
@@ -151,4 +198,10 @@ void AmpEditor::log(const juce::String& line) const {
     const auto file = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Library/Logs/Amp/amp.log");
     file.getParentDirectory().createDirectory();
     file.appendText(juce::Time::getCurrentTime().toString(false, true, true, true) + "  " + line + "\n");
+}
+
+void AmpEditor::note(const juce::String& text) {
+    juce::Array<juce::var> batch;
+    batch.add(event({{"kind", "note"}, {"value", text}}));
+    web_.emitEventIfBrowserIsVisible("midi", batch);
 }

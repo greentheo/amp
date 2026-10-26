@@ -198,7 +198,11 @@ export class Midi {
 
     for (const b of this.bindings) {
       if (b.kind !== kind || b.num !== a || b.ch !== ch) continue;
-      if (b.device && device && b.device !== device) continue;
+      // Scoped to another device — unless that device is not connected at
+      // all, which usually means the same controller under another name (a
+      // map from another machine, or the native app, which names devices
+      // through CoreMIDI rather than the browser).
+      if (b.device && device && b.device !== device && this.inputs.includes(b.device)) continue;
       this.apply(b, value);
     }
   }

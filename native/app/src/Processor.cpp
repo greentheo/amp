@@ -51,6 +51,17 @@ ampcore::Json toJson(const juce::var& v) {
     return ampcore::Json::parse(juce::JSON::toString(v, true).toStdString());
 }
 
+/** An object of up to three fields; an empty key is skipped. */
+juce::var with3(const char* k1, const juce::var& v1, const char* k2, const juce::var& v2, const char* k3,
+                const juce::var& v3) {
+    auto o = juce::var(new juce::DynamicObject());
+    auto* d = o.getDynamicObject();
+    if (*k1) d->setProperty(k1, v1);
+    if (*k2) d->setProperty(k2, v2);
+    if (*k3) d->setProperty(k3, v3);
+    return o;
+}
+
 /** {key: value} in one call. */
 juce::var with(const char* key, const juce::var& value) {
     auto o = object();
@@ -96,10 +107,51 @@ AmpProcessor::AmpProcessor()
     cab_.getDynamicObject()->setProperty("distance", 0.25);
     voicing_ = object();
 
-    startTimerHz(10);
+    surface_ = std::make_unique<Surface>(*this);
+    ampcore::MidiEvents ev;
+    ev.activity = [this](const std::string& text, int count, const std::string& device) {
+        post("activity", with3("text", juce::String(text), "count", count, "device", juce::String(device)));
+    };
+    ev.armed = [this](const std::string& id) { post("armed", juce::String(id)); };
+    ev.learned = [this](const ampcore::MidiBinding& b, const std::vector<std::string>& also) {
+        juce::Array<juce::var> ids;
+        for (const auto& a : also) ids.add(juce::String(a));
+        post("learned", with3("binding", juce::JSON::parse(ampcore::MidiMap::toJson({b}))[0], "also", ids, "", {}));
+    };
+    ev.refused = [this](const std::string& id, const std::string& why) {
+        post("refused", with3("id", juce::String(id), "why", juce::String(why), "", {}));
+    };
+    ev.bindingsChanged = [this] { post("bindings", {}); };
+    ev.catching = [this](const std::string& id, double n) {
+        post("catching", with3("id", juce::String(id), "n", n, "", {}));
+    };
+    ev.changed = [this](const std::string& id, double v) {
+        post("control", with3("id", juce::String(id), "value", v, "", {}));
+    };
+    midi_ = std::make_unique<ampcore::MidiMap>(*surface_, ev);
+
+    // The standalone opens the hardware itself. In a plugin, MIDI will come
+    // from the host instead.
+    if (juce::JUCEApplicationBase::isStandaloneApp()) {
+        midiRescan();
+        deviceWatch_ = juce::MidiDeviceListConnection::make([this] { midiRescan(); });
+        // `--midi-map <file>`: start with an exported map, for a rig that
+        // should come up mapped. (A saved session's map loads after this.)
+        const auto args = juce::StringArray::fromTokens(juce::JUCEApplicationBase::getCommandLineParameters(), true);
+        const int at = args.indexOf("--midi-map");
+        if (at >= 0 && at + 1 < args.size()) {
+            const auto why = midiImport(juce::File(args[at + 1].unquoted()).loadFileAsString());
+            if (why.isNotEmpty()) DBG("--midi-map: " << why);
+        }
+    }
+
+    startTimerHz(20);
 }
 
 AmpProcessor::~AmpProcessor() {
+    deviceWatch_ = {};
+    inputs_.clear();  // no more callbacks into the map
+    cancelPendingUpdate();
     stopTimer();
     delete nextCab_.exchange(nullptr);
     delete nextLanes_.exchange(nullptr);
@@ -109,6 +161,7 @@ AmpProcessor::~AmpProcessor() {
 // ---- settings ------------------------------------------------------------
 
 juce::var AmpProcessor::settings() const {
+    const auto midi = midiState();  // before settingsLock_: see the lock order
     std::lock_guard<std::mutex> lock(settingsLock_);
     auto knob = [&](std::atomic<float>* p) { return juce::var(static_cast<double>(p->load())); };
     auto root = object();
@@ -135,6 +188,7 @@ juce::var AmpProcessor::settings() const {
     r->setProperty("cab", cab_.clone());
     r->setProperty("board", board_.clone());
     r->setProperty("voicing", voicing_.clone());
+    r->setProperty("midi", midi);
     return root;
 }
 
@@ -310,6 +364,17 @@ void AmpProcessor::retire(Trash t) {
 }
 
 void AmpProcessor::timerCallback() {
+    {
+        std::lock_guard<std::mutex> lock(midiLock_);
+        midi_->tick(juce::Time::getMillisecondCounterHiRes() / 1000);
+    }
+    juce::var cab;
+    {
+        std::lock_guard<std::mutex> lock(settingsLock_);
+        std::swap(cab, pendingCab_);
+    }
+    if (cab.isObject()) setCab(cab);
+
     const auto r = trashFifo_.read(trashFifo_.getNumReady());
     auto empty = [&](int start, int size) {
         for (int i = 0; i < size; i++) {
@@ -441,9 +506,11 @@ juce::AudioProcessorEditor* AmpProcessor::createEditor() { return new AmpEditor(
 
 void AmpProcessor::getStateInformation(juce::MemoryBlock& dest) {
     auto tree = state.copyState();
+    const auto midi = midiState();
     {
         std::lock_guard<std::mutex> lock(settingsLock_);
         auto structure = object();
+        structure.getDynamicObject()->setProperty("midi", midi["bindings"]);
         structure.getDynamicObject()->setProperty("cab", cab_);
         structure.getDynamicObject()->setProperty("board", board_);
         structure.getDynamicObject()->setProperty("voicing", voicing_);
@@ -472,6 +539,252 @@ void AmpProcessor::setStateInformation(const void* data, int size) {
         postLanes();
     }
     setVoicing(structure["voicing"]);
+    if (structure["midi"].isArray()) midiSetBindings(structure["midi"]);
+}
+
+// ---- MIDI ------------------------------------------------------------------
+
+/** The controls the map drives, by the page's ids: "amp.<knob>",
+ *  "amp.stages", "pedal.<uid>.<knob>", "pedal.<uid>.on". */
+class AmpProcessor::Surface : public ampcore::ControlSurface {
+public:
+    explicit Surface(AmpProcessor& p) : p_(p) {}
+
+    ampcore::ControlInfo info(const std::string& id) const override {
+        ampcore::ControlInfo c;
+        const juce::String s(id);
+        if (s.startsWith("amp.")) {
+            const auto k = s.fromFirstOccurrenceOf("amp.", false, false);
+            if (k == "stages") return {ampcore::ControlInfo::Step, 1, 4, 1};
+            if (k == "axis" || k == "distance") return {ampcore::ControlInfo::Knob, 0, 1, 0};
+            if (k == "stack") return c;
+            if (auto* prm = p_.state.getParameter(k)) {
+                const auto range = p_.state.getParameterRange(k);
+                juce::ignoreUnused(prm);
+                return {ampcore::ControlInfo::Knob, range.start, range.end, 0};
+            }
+            return c;
+        }
+        juce::String uid, key;
+        juce::var slot;
+        if (!pedal(s, uid, key, slot)) return c;
+        if (key == "on") return {ampcore::ControlInfo::Switch, 0, 1, 0};
+        if (slot["values"].hasProperty(key)) return {ampcore::ControlInfo::Knob, 0, 1, 0};
+        return c;
+    }
+
+    double value(const std::string& id) const override {
+        const juce::String s(id);
+        if (s.startsWith("amp.")) {
+            const auto k = s.fromFirstOccurrenceOf("amp.", false, false);
+            if (k == "axis" || k == "distance") {
+                std::lock_guard<std::mutex> lock(p_.settingsLock_);
+                if (p_.pendingCab_.hasProperty(k)) return p_.pendingCab_[juce::Identifier(k)];
+                return p_.cab_[juce::Identifier(k)];
+            }
+            auto* v = p_.state.getRawParameterValue(k);
+            return v ? v->load() : 0;
+        }
+        juce::String uid, key;
+        juce::var slot;
+        if (!pedal(s, uid, key, slot)) return 0;
+        if (key == "on") return static_cast<bool>(slot["on"]) ? 1 : 0;
+        return slot["values"][juce::Identifier(key)];
+    }
+
+    void set(const std::string& id, double v) override {
+        const juce::String s(id);
+        if (s.startsWith("amp.")) {
+            const auto k = s.fromFirstOccurrenceOf("amp.", false, false);
+            if (k == "axis" || k == "distance") p_.queueCab(k, v);
+            else p_.setKnob(k, v);
+            return;
+        }
+        juce::String uid, key;
+        juce::var slot;
+        if (!pedal(s, uid, key, slot)) return;
+        if (key == "on") p_.setPedalOn(uid, v >= 0.5);
+        else p_.setPedalValue(uid, key, v);
+    }
+
+private:
+    bool pedal(const juce::String& id, juce::String& uid, juce::String& key, juce::var& slot) const {
+        if (!id.startsWith("pedal.")) return false;
+        const auto rest = id.fromFirstOccurrenceOf("pedal.", false, false);
+        uid = rest.upToLastOccurrenceOf(".", false, false);
+        key = rest.fromLastOccurrenceOf(".", false, false);
+        std::lock_guard<std::mutex> lock(p_.settingsLock_);
+        int lane;
+        size_t index;
+        return p_.findPedal(uid, lane, index, slot);
+    }
+
+    AmpProcessor& p_;
+};
+
+void AmpProcessor::queueCab(const juce::String& key, double value) {
+    // A MIDI knob on the cab sends a stream of values; rebuilding the cab
+    // for each would be wasted work. The timer applies the latest.
+    std::lock_guard<std::mutex> lock(settingsLock_);
+    if (!pendingCab_.isObject()) pendingCab_ = object();
+    pendingCab_.getDynamicObject()->setProperty(key, value);
+}
+
+void AmpProcessor::handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& m) {
+    const auto* data = m.getRawData();
+    const int size = m.getRawDataSize();
+    // Clock, active sensing and sysex: nothing to bind, and clock alone
+    // would flood the monitor.
+    if (size < 1 || size > 3 || data[0] >= 0xf0) return;
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->onMessage(data, size, source->getName().toStdString(), juce::Time::getMillisecondCounterHiRes() / 1000);
+}
+
+void AmpProcessor::post(const char* kind, const juce::var& value) {
+    {
+        std::lock_guard<std::mutex> lock(outboxLock_);
+        outbox_.add(with3("kind", juce::String(kind), "value", value, "", {}));
+    }
+    triggerAsyncUpdate();
+}
+
+void AmpProcessor::handleAsyncUpdate() {
+    juce::Array<juce::var> items;
+    {
+        std::lock_guard<std::mutex> lock(outboxLock_);
+        items.swapWith(outbox_);
+    }
+    if (!sink_ || items.isEmpty()) return;
+    // A knob sweep is dozens of messages between two flushes. Send each
+    // control's latest value once, and the monitor's latest line.
+    juce::Array<juce::var> out, controls;
+    juce::StringArray seen;
+    bool bindings = false;
+    juce::var activity;
+    for (int i = items.size(); --i >= 0;) {
+        const auto& it = items.getReference(i);
+        const auto kind = it["kind"].toString();
+        if (kind == "control") {
+            const auto id = it["value"]["id"].toString();
+            if (seen.contains(id)) continue;
+            seen.add(id);
+            controls.insert(0, it["value"]);
+        } else if (kind == "activity") {
+            if (activity.isVoid()) activity = it["value"];
+        } else if (kind == "bindings") {
+            bindings = true;
+        }
+    }
+    for (const auto& it : items) {
+        const auto kind = it["kind"].toString();
+        if (kind != "control" && kind != "activity" && kind != "bindings") out.add(it);
+    }
+    if (!activity.isVoid()) out.add(with3("kind", "activity", "value", activity, "", {}));
+    if (!controls.isEmpty()) out.add(with3("kind", "controls", "value", controls, "", {}));
+    if (bindings) out.add(with3("kind", "bindings", "value", midiState()["bindings"], "", {}));
+    sink_(out);
+}
+
+juce::var AmpProcessor::midiState() const {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    juce::Array<juce::var> names;
+    for (const auto& in : inputs_) names.add(in->getName());
+    return with3("inputs", names, "bindings", juce::JSON::parse(ampcore::MidiMap::toJson(midi_->bindings())), "", {});
+}
+
+void AmpProcessor::midiRescan() {
+    const auto available = juce::MidiInput::getAvailableDevices();
+    std::vector<std::unique_ptr<juce::MidiInput>> keep;
+    {
+        std::lock_guard<std::mutex> lock(midiLock_);
+        for (auto& in : inputs_) {
+            bool present = false;
+            for (const auto& d : available) present = present || d.identifier == in->getIdentifier();
+            if (present) keep.push_back(std::move(in));
+        }
+    }
+    // Closed outside the lock: stopping an input waits for its callback.
+    std::vector<std::unique_ptr<juce::MidiInput>> gone;
+    {
+        std::lock_guard<std::mutex> lock(midiLock_);
+        for (auto& in : inputs_) if (in) gone.push_back(std::move(in));
+        inputs_ = std::move(keep);
+    }
+    gone.clear();
+    std::vector<std::unique_ptr<juce::MidiInput>> opened;
+    for (const auto& d : available) {
+        bool open = false;
+        {
+            std::lock_guard<std::mutex> lock(midiLock_);
+            for (const auto& in : inputs_) open = open || in->getIdentifier() == d.identifier;
+        }
+        if (open) continue;
+        if (auto in = juce::MidiInput::openDevice(d.identifier, this)) {
+            in->start();
+            opened.push_back(std::move(in));
+        }
+    }
+    std::vector<std::string> names;
+    {
+        std::lock_guard<std::mutex> lock(midiLock_);
+        for (auto& in : opened) inputs_.push_back(std::move(in));
+        for (const auto& in : inputs_) names.push_back(in->getName().toStdString());
+        midi_->setInputs(names);
+    }
+    juce::Array<juce::var> list;
+    for (const auto& n : names) list.add(juce::String(n));
+    post("inputs", list);
+}
+
+void AmpProcessor::midiArm(const juce::String& id) {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->arm(id.toStdString());
+}
+
+void AmpProcessor::midiDisarm() {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->disarm();
+}
+
+void AmpProcessor::midiUnbind(const juce::String& id) {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->unbind(id.toStdString());
+}
+
+int AmpProcessor::midiDrop(const juce::String& prefix) {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    return midi_->dropPrefix(prefix.toStdString());
+}
+
+void AmpProcessor::midiClear() {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->clear();
+}
+
+void AmpProcessor::midiTouched(const juce::String& id) {
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->touched(id.toStdString());
+}
+
+void AmpProcessor::midiSetBindings(const juce::var& list) {
+    auto bindings = ampcore::MidiMap::fromJson(toJson(list));
+    std::lock_guard<std::mutex> lock(midiLock_);
+    midi_->setBindings(std::move(bindings));
+}
+
+juce::String AmpProcessor::midiImport(const juce::String& text) {
+    const auto d = juce::JSON::parse(text);
+    if (d["format"].toString() != "amp-midi-map") return "not an Amp MIDI map";
+    midiSetBindings(d["bindings"]);
+    return {};
+}
+
+juce::String AmpProcessor::midiExport() const {
+    auto o = object();
+    o.getDynamicObject()->setProperty("format", "amp-midi-map");
+    o.getDynamicObject()->setProperty("version", 1);
+    o.getDynamicObject()->setProperty("bindings", midiState()["bindings"]);
+    return juce::JSON::toString(o);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new AmpProcessor(); }

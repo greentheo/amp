@@ -1,10 +1,15 @@
 # Amp
 
-A guitar amplifier that runs in a browser tab. A cascaded valve preamp, a tone
-stack taken off the schematic, a push-pull power amp with sag, and a speaker
-cabinet — no plugins, no installer, no assets to download.
+A guitar amplifier: a cascaded valve preamp, a tone stack taken off the
+schematic, a push-pull power amp with sag, a speaker cabinet, and a board of
+pedals you can drive from MIDI.
 
-Live: <https://greentheo.github.io/amp/>
+**The native app is the instrument.** It runs the amp in C++ at 16-frame
+buffers on macOS, with iOS, then Windows and Android, to follow. The browser
+build came first and still runs (live at <https://greentheo.github.io/amp/>),
+and its page is now the app's interface too, but where the two differ in
+what they can do, native leads: it has the latency, and it is where new
+work lands first. See [The native build](#the-native-build).
 
 ## Why it sounds like an amp
 
@@ -251,6 +256,18 @@ and the voicing travel as the same JSON as `engine.chainSettings()`.
 The icon is `icons/amp.svg`, a chicken-head knob on a blonde amp's panel.
 `tools/icons.sh` renders the app icon, the favicons and the home-screen
 icon from it.
+
+**MIDI** in the app goes through CoreMIDI into `ampcore::MidiMap`, a port
+of `js/midi.js`: learn, soft takeover, relative encoders, ranges, and
+footswitches that toggle or follow. It runs inside the app, not the page,
+so a footswitch works even while macOS has the WebView suspended behind
+other windows. Every input is opened, and plugging one in later just works.
+The page arms and edits bindings and shows the monitor line. Maps export and
+import in the browser's own format, so a map made in Chrome loads in the
+app, and `--midi-map <file>` loads one at launch. Two checks keep it
+honest. `node tools/midimap-parity.mjs` runs one scripted session through
+both maps and requires every control change to match. `swift
+tools/midi-send.swift` is a virtual controller for testing without hardware.
 
 Two settings help while working on it. `AMP_WEB_ROOT` serves the page from
 a checkout instead of the copy inside the app, so an edit needs a reload,

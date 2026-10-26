@@ -8,6 +8,7 @@
 //   ampcore-test conv ir ir.wav in.wav out.wav
 //   ampcore-test conv spring in.wav outL.wav outR.wav
 //   ampcore-test pedal <type> in.wav out.wav [knob=value ...] [--toggle s1,s2,...]
+//   ampcore-test midimap scenario.json      (see tools/midimap-parity.mjs)
 //
 // Everything renders at 48 kHz, the stimulus's rate. The conv commands add
 // the same 2 s tail renderStimulus() does, and take --partition N (the
@@ -22,12 +23,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "ampcore/biquad.hpp"
 #include "ampcore/cab.hpp"
 #include "ampcore/convolver.hpp"
+#include "ampcore/midimap.hpp"
 #include "ampcore/pedals.hpp"
 #include "ampcore/reverb.hpp"
 #include "ampcore/wav.hpp"
@@ -57,6 +62,25 @@ std::vector<float> withTail(const Wav& w) {
     std::vector<float> x = w.mono;
     x.resize(x.size() + static_cast<size_t>(w.rate * 2 + 0.5), 0.0f);
     return x;
+}
+
+/** Controls for the MIDI map test: a plain table of values. */
+struct TestSurface : ControlSurface {
+    std::map<std::string, ControlInfo> infos;
+    std::map<std::string, double> values;
+    ControlInfo info(const std::string& id) const override {
+        auto it = infos.find(id);
+        return it == infos.end() ? ControlInfo{} : it->second;
+    }
+    double value(const std::string& id) const override { return values.at(id); }
+    void set(const std::string& id, double v) override { values[id] = v; }
+};
+
+std::string readFile(const char* path) {
+    std::ifstream f(path);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
 }
 
 /** Run `f(in, out, n)` over x in host-sized blocks. */
@@ -148,6 +172,63 @@ int main(int argc, char** argv) {
             pedal->process(&x[at], &y[at], n);
         });
         writeWavFloat(argv[4], y, in.rate);
+        return 0;
+    }
+    if (argc >= 3 && !std::strcmp(argv[1], "midimap")) {
+        const Json sc = Json::parse(readFile(argv[2]));
+        TestSurface surface;
+        for (const Json& c : sc.get("controls")->a) {
+            ControlInfo ci;
+            const std::string kind = c.str("kind", "knob");
+            ci.kind = kind == "switch" ? ControlInfo::Switch : kind == "step" ? ControlInfo::Step : ControlInfo::Knob;
+            ci.min = c.num("min", 0);
+            ci.max = c.num("max", 1);
+            ci.step = c.num("step", 0);
+            surface.infos[c.str("id", "")] = ci;
+            surface.values[c.str("id", "")] = c.num("value", 0);
+        }
+        std::string changes;
+        MidiEvents ev;
+        ev.changed = [&](const std::string& id, double v) {
+            char buf[64];
+            std::snprintf(buf, sizeof buf, "%.17g", v);
+            changes += std::string(changes.empty() ? "" : ",") + "[\"" + id + "\"," + buf + "]";
+        };
+        MidiMap map(surface, ev);
+        for (const Json& e : sc.get("events")->a) {
+            const double t = e.num("t", 0);
+            const std::string op = e.str("op", "");
+            if (op == "inputs") {
+                std::vector<std::string> names;
+                for (const Json& n : e.get("names")->a) names.push_back(n.s);
+                map.setInputs(names);
+            } else if (op == "arm") {
+                map.arm(e.str("id", ""));
+            } else if (op == "msg") {
+                std::vector<uint8_t> d;
+                for (const Json& b : e.get("data")->a) d.push_back(static_cast<uint8_t>(b.n));
+                map.onMessage(d.data(), static_cast<int>(d.size()), e.str("device", ""), t);
+            } else if (op == "touch") {
+                surface.set(e.str("id", ""), e.num("value", 0));
+                map.touched(e.str("id", ""));
+            } else if (op == "edit") {
+                auto bs = map.bindings();
+                for (auto& b : bs) {
+                    if (b.id != e.str("id", "")) continue;
+                    const Json* set = e.get("set");
+                    b.mode = set->str("mode", b.mode);
+                    b.lo = set->num("lo", b.lo);
+                    b.hi = set->num("hi", b.hi);
+                    if (const Json* tk = set->get("takeover")) b.takeover = tk->b;
+                }
+                map.setBindings(bs);
+            } else if (op == "drop") {
+                map.dropPrefix(e.str("prefix", ""));
+            } else if (op == "tick") {
+                map.tick(t);
+            }
+        }
+        std::printf("{\"changes\":[%s],\"bindings\":%s}\n", changes.c_str(), MidiMap::toJson(map.bindings()).c_str());
         return 0;
     }
     std::fprintf(stderr, "usage: see the top of tools/test.cpp\n");

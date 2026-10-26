@@ -34,12 +34,15 @@ private:
     juce::var audioInfo() const;
     std::optional<juce::WebBrowserComponent::Resource> serve(const juce::String& path) const;
     void log(const juce::String& line) const;
+    /** A line for the MIDI panel's status. */
+    void note(const juce::String& text);
 
     AmpProcessor& proc_;
     const juce::File root_;
     const bool verbose_;
     int ticks_ = 0;
     juce::WebBrowserComponent web_;
+    std::unique_ptr<juce::FileChooser> chooser_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AmpEditor)
 };

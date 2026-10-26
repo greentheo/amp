@@ -15,16 +15,22 @@
 // thread. The audio thread never allocates, frees or waits.
 
 #pragma once
+#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 
 #include "ampcore/chain.hpp"
+#include "ampcore/midimap.hpp"
 
-class AmpProcessor : public juce::AudioProcessor, private juce::Timer {
+class AmpProcessor : public juce::AudioProcessor,
+                     private juce::Timer,
+                     private juce::AsyncUpdater,
+                     private juce::MidiInputCallback {
 public:
     AmpProcessor();
     ~AmpProcessor() override;
@@ -73,6 +79,30 @@ public:
     /** The output's peak since the last call. */
     float takePeak() { return peak_.exchange(0.0f); }
 
+    // ---- MIDI, on the message thread ----------------------------------
+    //
+    // The map is ampcore::MidiMap, a port of js/midi.js, running here rather
+    // than in the page: MIDI arrives on CoreMIDI's thread and moves the
+    // controls directly, so a footswitch works whether or not the WebView
+    // is awake. The page only arms, edits and shows.
+
+    void midiArm(const juce::String& id);
+    void midiDisarm();
+    void midiUnbind(const juce::String& id);
+    int midiDrop(const juce::String& prefix);
+    void midiClear();
+    /** Replace the bindings: the page's table after an edit. */
+    void midiSetBindings(const juce::var& list);
+    /** An exported "amp-midi-map" file, in or out. */
+    juce::String midiImport(const juce::String& text);  // empty on success, else why not
+    juce::String midiExport() const;
+    /** The page moved a control itself: knobs bound to it must catch up. */
+    void midiTouched(const juce::String& id);
+    void midiRescan();
+    /** Where the map's news goes — the editor, while one is open. Called and
+     *  delivered on the message thread. */
+    void setMidiSink(std::function<void(const juce::var&)> sink) { sink_ = std::move(sink); }
+
 private:
     struct Command {
         uint32_t gen = 0;  // the board generation a pedal command was aimed at
@@ -102,6 +132,13 @@ private:
     bool findPedal(const juce::String& uid, int& lane, size_t& index, juce::var& slot) const;
     void timerCallback() override;
 
+    class Surface;
+    void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& m) override;
+    void handleAsyncUpdate() override;
+    void post(const char* kind, const juce::var& value);  // any thread
+    juce::var midiState() const;                            // takes midiLock_
+    void queueCab(const juce::String& key, double value);
+
     std::unique_ptr<ampcore::Chain> chain_;
     std::atomic<double> rate_{0};
 
@@ -127,6 +164,17 @@ private:
     int heldFor_ = 0;
     std::atomic<bool> panic_{false};
     std::atomic<float> peak_{0};
+
+    // MIDI. Lock order: midiLock_ before settingsLock_, never the reverse.
+    std::unique_ptr<Surface> surface_;
+    std::unique_ptr<ampcore::MidiMap> midi_;
+    mutable std::mutex midiLock_;
+    std::vector<std::unique_ptr<juce::MidiInput>> inputs_;
+    juce::MidiDeviceListConnection deviceWatch_;
+    std::mutex outboxLock_;
+    juce::Array<juce::var> outbox_;
+    std::function<void(const juce::var&)> sink_;
+    juce::var pendingCab_;  // knob moves on the cab, coalesced; settingsLock_
 
     std::atomic<float> *drive_, *bass_, *mid_, *treble_, *bias_, *presence_, *sag_;
     std::atomic<float> *masterVol_, *gateKnob_, *reverb_, *master_, *cabMix_, *stages_, *stack_;

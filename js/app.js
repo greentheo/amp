@@ -11,6 +11,7 @@ import { controls } from './controls.js';
 import { makeKnob, showCatching } from './ui/knob.js';
 import { initBoard, loadBoard } from './ui/board.js';
 import { Midi, sourceText } from './midi.js';
+import { NativeMidi } from './native-midi.js';
 
 const $ = (id) => document.getElementById(id);
 // Inside the native app the same page drives the app's engine instead of
@@ -105,8 +106,12 @@ function push(spec) {
     // Re-rendering an impulse response on every pixel of knob movement is a
     // lot of work to throw away; land on the value instead.
     clearTimeout(cabTimer);
+    // A move the app made itself (a MIDI knob) only redraws here; sending
+    // it back would count as the page touching the knob.
+    const silent = engine.native && engine.quiet;
     cabTimer = setTimeout(async () => {
-      await engine.setCab({ axis: values.axis, distance: values.distance });
+      const send = () => engine.setCab({ axis: values.axis, distance: values.distance });
+      await (silent ? engine.quietly(send) : send());
       drawCab();
       $('ir-note').textContent = 'generated — no asset to download';
     }, 120);
@@ -386,12 +391,14 @@ function renderMaps() {
 
 function wireMidi() {
   let monTimer = null, dotTimer = null;
-  midi = new Midi(controls, {
+  // In the app the map lives in the app (see js/native-midi.js); the panel is
+  // the same either way.
+  midi = new (engine.native ? NativeMidi.bind(null, engine) : Midi)(controls, {
     onStatus: (names) => {
       const live = names.length > 0;
       $('midi-status').textContent = live ? `${names.length} input${names.length > 1 ? 's' : ''} — ${names.join(', ')}` : 'MIDI is on, but no inputs were found';
       $('midi-status').classList.toggle('live', live);
-      $('btn-midi').textContent = live ? 'Reconnect' : 'Retry';
+      $('btn-midi').textContent = engine.native ? 'Rescan' : (live ? 'Reconnect' : 'Retry');
       $('midi-dot').classList.toggle('live', live);
     },
     // The decisive diagnostic. If this stays blank while you move a knob,
@@ -414,6 +421,7 @@ function wireMidi() {
     },
     onBindings: () => { renderMaps(); refreshBadges(); },
     onCatching: (id, n) => showCatching(id, n),
+    onNote: (text) => { $('learn-status').textContent = text; },
   });
 
   $('btn-midi').addEventListener('click', async () => {
@@ -453,6 +461,7 @@ function wireMidi() {
   });
 
   $('btn-midi-export').addEventListener('click', () => {
+    if (engine.native) return engine.send({ type: 'midiExport' });
     const blob = new Blob([midi.toPreset()], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -460,7 +469,7 @@ function wireMidi() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   });
-  $('btn-midi-import').addEventListener('click', () => $('midi-file').click());
+  $('btn-midi-import').addEventListener('click', () => (engine.native ? engine.send({ type: 'midiImport' }) : $('midi-file').click()));
   $('midi-file').addEventListener('change', async (e) => {
     const f = e.target.files[0];
     e.target.value = '';
