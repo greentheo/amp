@@ -12,6 +12,7 @@ import { makeKnob, showCatching } from './ui/knob.js';
 import { initBoard, loadBoard } from './ui/board.js';
 import { setVoice } from './ui/amplook.js';
 import { mountCabPictures } from './ui/cabpic.js';
+import { initCabView } from './ui/cabview.js';
 import { Midi, sourceText } from './midi.js';
 import { NativeMidi } from './native-midi.js';
 
@@ -115,7 +116,7 @@ function push(spec) {
       const send = () => engine.setCab({ axis: values.axis, distance: values.distance });
       await (silent ? engine.quietly(send) : send());
       drawCab();
-      $('ir-note').textContent = 'generated — no asset to download';
+      $('ir-note').textContent = '';
     }, 120);
   } else {
     engine.set(spec.k, values[spec.k]);
@@ -765,28 +766,9 @@ function fit(c, h) {
 
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-/** The cab's impulse response, drawn as the curve it actually is. */
-function drawCab() {
-  const c = $('cabcurve');
-  const { ctx, w, h } = fit(c, 90);
-  ctx.clearRect(0, 0, w, h);
-  const buf = engine.cab && engine.cab.buffer;
-  if (!buf) return;
-  const d = buf.getChannelData(0);
-  ctx.strokeStyle = css('--accent');
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  const n = Math.min(d.length, Math.round(buf.sampleRate * 0.03));
-  for (let x = 0; x < w; x++) {
-    const i = Math.floor((x / w) * n);
-    const y = h / 2 - d[i] * h * 0.45;
-    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.fillStyle = css('--faint');
-  ctx.font = '9px ui-monospace,monospace';
-  ctx.fillText(`${(n / buf.sampleRate * 1000).toFixed(0)} ms of impulse response`, 6, 12);
-}
+/** The cabinet panel's cards and tone curve; see js/ui/cabview.js. */
+let cabView = null;
+function drawCab() { if (cabView) cabView.refresh(); }
 
 /** Output spectrum, log frequency, with the 5 kHz line marked. */
 function drawScope() {
@@ -854,7 +836,7 @@ function wireSelects() {
   $('speaker').addEventListener('change', async (e) => {
     await engine.setCab({ speaker: e.target.value });
     drawCab();
-    $('ir-note').textContent = 'generated — no asset to download';
+    $('ir-note').textContent = '';
   });
 
   $('stages').addEventListener('change', (e) => engine.set('stages', +e.target.value));
@@ -1075,6 +1057,11 @@ buildKnobs();
 mountCabPictures($('cabpics'));
 wireBoard();
 wireSelects();
+cabView = initCabView({
+  engine,
+  setKnob,
+  els: { cards: $('spkcards'), edit: $('cabedit'), editBtn: $('btn-cabedit'), canvas: $('cabcurve'), caption: $('cabcaption') },
+});
 if (!engine.native) {
   wireDI();
   wireLatency();

@@ -115,13 +115,17 @@
         <div class="knobs" id="cabknobs"></div>
         <div class="cabpics" id="cabpics"></div>
       </div>
+      <div class="spkcards" id="spkcards"></div>
       <div class="cabrow">
-        <label class="sel">Speaker<select id="speaker"></select></label>
+        <button class="mini" id="btn-cabedit">Edit cab</button>
+        <select id="speaker" hidden></select>
         <button class="mini web-only" id="btn-ir">Load an IR&hellip;</button>
         <input type="file" id="ir-file" accept=".wav,audio/wav" hidden>
-        <span class="note" id="ir-note">generated — no asset to download</span>
+        <span class="note" id="ir-note"></span>
       </div>
-      <canvas id="cabcurve" height="90"></canvas>
+      <div class="cabedit" id="cabedit" hidden></div>
+      <canvas id="cabcurve" height="150"></canvas>
+      <p class="note" id="cabcaption"></p>
       </div>
     </div>
 

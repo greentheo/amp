@@ -188,6 +188,7 @@ juce::var AmpProcessor::settings() const {
     r->setProperty("cab", cab_.clone());
     r->setProperty("board", board_.clone());
     r->setProperty("voicing", voicing_.clone());
+    r->setProperty("cabs", cabs_.isArray() ? cabs_.clone() : juce::var(juce::Array<juce::var>()));
     r->setProperty("midi", midi);
     return root;
 }
@@ -315,6 +316,11 @@ void AmpProcessor::setPedalOn(const juce::String& uid, bool on) {
     std::strcpy(c.name, "on");
     c.value = on ? 1 : 0;
     push(c);
+}
+
+void AmpProcessor::setCabs(const juce::var& cabs) {
+    std::lock_guard<std::mutex> lock(settingsLock_);
+    cabs_ = cabs.isArray() ? cabs.clone() : juce::var();
 }
 
 void AmpProcessor::setVoicing(const juce::var& voicing) {
@@ -514,6 +520,7 @@ void AmpProcessor::getStateInformation(juce::MemoryBlock& dest) {
         structure.getDynamicObject()->setProperty("cab", cab_);
         structure.getDynamicObject()->setProperty("board", board_);
         structure.getDynamicObject()->setProperty("voicing", voicing_);
+        structure.getDynamicObject()->setProperty("cabs", cabs_);
         tree.setProperty("structure", juce::JSON::toString(structure, true), nullptr);
     }
     if (auto xml = tree.createXml()) copyXmlToBinary(*xml, dest);
@@ -531,6 +538,7 @@ void AmpProcessor::setStateInformation(const void* data, int size) {
         // Replaced, not merged: a session is the whole of what it saved.
         std::lock_guard<std::mutex> lock(settingsLock_);
         if (structure["cab"].isObject()) cab_ = structure["cab"].clone();
+        if (structure["cabs"].isArray()) cabs_ = structure["cabs"].clone();
         if (structure["board"].isObject()) {
             board_ = structure["board"].clone();
             boardGen_++;

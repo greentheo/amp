@@ -53,6 +53,14 @@ export const SPEAKERS = {
 };
 
 /**
+ * How many speakers each cab above has. Kept out of SPEAKERS on purpose:
+ * every numeric field there goes into the cab's noise seed, so adding one
+ * would quietly change every cab. A `count` option asks for a different
+ * number of the same speaker; see renderCab.
+ */
+export const SPEAKER_COUNT = { g12m: 1, g12t: 4, v30: 2, jensen: 1, blue: 1 };
+
+/**
  * The parts of the model that are not in the speaker table. Overridable for
  * the same reason the preamp's voicing is: they have to be fitted against a
  * measured response, and you cannot fit a literal.
@@ -114,12 +122,19 @@ export async function renderCab(ctx, opts = {}) {
   hp.frequency.value = spec.hp;
   hp.Q.value = spec.hpQ;
 
+  // More of the same speaker than this cab has, or fewer: each doubling is a
+  // bigger box with more cone in it — the body resonance a little lower and
+  // stronger, and more low end. An approximation, labelled as one in the UI;
+  // at the cab's own count it changes nothing at all.
+  const native = SPEAKER_COUNT[speaker] || 1;
+  const step = typeof opts.count === 'number' ? Math.log2(opts.count / native) : 0;
+
   // Free-air resonance: the bump that makes a 1x12 thump.
   const res = off.createBiquadFilter();
   res.type = 'peaking';
-  res.frequency.value = spec.res;
+  res.frequency.value = spec.res * Math.pow(2, -0.12 * step);
   res.Q.value = spec.resQ;
-  res.gain.value = spec.resDb;
+  res.gain.value = spec.resDb + step;
 
   // Cone breakup — the upper-mid honk that reads as "guitar speaker".
   const pres = off.createBiquadFilter();
@@ -141,7 +156,7 @@ export async function renderCab(ctx, opts = {}) {
   const tilt = off.createBiquadFilter();
   tilt.type = 'lowshelf';
   tilt.frequency.value = spec.tiltHz;
-  tilt.gain.value = -spec.tilt + distance * 3;
+  tilt.gain.value = -spec.tilt + distance * 3 + 1.5 * step;
 
   node.connect(hp).connect(res).connect(pres).connect(tilt).connect(lp).connect(lp2)
     .connect(off.destination);

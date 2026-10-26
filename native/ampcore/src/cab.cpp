@@ -18,6 +18,11 @@ const std::map<std::string, std::map<std::string, double>> SPEAKERS = {
     {"blue", {{"res", 221}, {"resQ", 3.82}, {"pres", 2800}, {"presDb", 4.02}, {"top", 3298}, {"tilt", -8.98}}},
 };
 
+// SPEAKER_COUNT in cab.js: kept out of SPEAKERS, whose fields seed the noise.
+const std::map<std::string, double> SPEAKER_COUNT = {
+    {"g12m", 1}, {"g12t", 4}, {"v30", 2}, {"jensen", 1}, {"blue", 1},
+};
+
 const std::map<std::string, double> CAB_SHAPE = {
     {"hp", 115}, {"hpQ", 1.59}, {"resDb", 3.53}, {"presQ", 3.52},
     {"topQ", 0.56}, {"top2", 2.5}, {"top2Q", 1.5}, {"tiltHz", 931},
@@ -61,9 +66,15 @@ std::vector<float> renderCab(double rate, const CabOpts& opts) {
     }
 
     Biquad hp(Biquad::Highpass, rate, get("hp"), get("hpQ"));
-    Biquad res(Biquad::Peaking, rate, get("res"), get("resQ"), get("resDb"));
+    // A count other than the cab's own: a bigger box with more cone. At its
+    // own count, step is 0 and every value below is untouched.
+    const auto nativeIt = SPEAKER_COUNT.find(opts.speaker);
+    const double native = nativeIt != SPEAKER_COUNT.end() ? nativeIt->second : 1;
+    const double step = opts.num.count("count") ? std::log2(opts.num.at("count") / native) : 0;
+
+    Biquad res(Biquad::Peaking, rate, get("res") * std::pow(2.0, -0.12 * step), get("resQ"), get("resDb") + step);
     Biquad pres(Biquad::Peaking, rate, get("pres") * (0.75 + axis * 0.5), get("presQ"), get("presDb") * (0.45 + axis * 0.9));
-    Biquad tilt(Biquad::Lowshelf, rate, get("tiltHz"), 0, -get("tilt") + distance * 3);
+    Biquad tilt(Biquad::Lowshelf, rate, get("tiltHz"), 0, -get("tilt") + distance * 3 + 1.5 * step);
     Biquad lp(Biquad::Lowpass, rate, get("top") * (0.72 + axis * 0.55), get("topQ"));
     Biquad lp2(Biquad::Lowpass, rate, get("top") * get("top2"), get("top2Q"));
     // hp -> res -> pres -> tilt -> lp -> lp2, each node's output a float buffer.

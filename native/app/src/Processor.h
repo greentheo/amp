@@ -75,6 +75,8 @@ public:
     void setPedalOn(const juce::String& uid, bool on);
     /** The whole override set: {} or void is the stock voicing. */
     void setVoicing(const juce::var& voicing);
+    /** The user's custom cabs: a list the page keeps, saved with the app. */
+    void setCabs(const juce::var& cabs);
     void panic() { panic_.store(true); }
     /** The output's peak since the last call. */
     float takePeak() { return peak_.exchange(0.0f); }
@@ -146,7 +148,7 @@ private:
     // prepareToPlay, which can run off the message thread; the audio
     // callback never takes it.
     mutable std::mutex settingsLock_;
-    juce::var cab_, board_, voicing_;
+    juce::var cab_, board_, voicing_, cabs_;
 
     juce::AbstractFifo commandFifo_{256};
     std::array<Command, 256> commands_;

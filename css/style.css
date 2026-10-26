@@ -173,6 +173,32 @@ body{background:var(--bg);color:var(--ink);
 .cabpic .spk{fill:var(--ink)}
 .cabpic .pct{font:600 11px ui-monospace,monospace;fill:var(--ink)}
 
+/* Speaker cards: the cab's layout, its name, a sparkline of its tone. */
+.spkcards{display:flex;gap:8px;overflow-x:auto;margin-top:14px;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:#4a3d33 transparent}
+.spkcard{flex:0 0 auto;width:118px;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:8px 8px 6px;background:var(--dial-bg);border:1px solid var(--line);border-radius:9px;
+  color:var(--ink);cursor:pointer;font:inherit}
+.spkcard:hover{border-color:#5a4838}
+.spkcard.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.spkcard .layout{width:48px;height:40px}
+.spkcard .layout .box{fill:#2a211a;stroke:#5a4838;stroke-width:1.5}
+.spkcard .layout .cone{fill:#15100c;stroke:#6b5b4c;stroke-width:1}
+.spkcard .layout .dust{fill:#6b5b4c}
+.spkcard.on .layout .box{stroke:var(--accent)}
+.spk-name{font-size:12px;line-height:1.2;text-align:center}
+.spk-sub{font:10px ui-monospace,monospace;color:var(--faint);letter-spacing:.06em}
+.spkcard .spark{width:100%;height:24px}
+.spkcard .spark path{fill:none;stroke:var(--faint);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.spkcard.on .spark path{stroke:var(--accent)}
+.cabedit{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:9px;background:rgba(0,0,0,.25)}
+.edit-dials{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:8px}
+.edit-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.edit-row .count{flex:0 0 auto}
+.edit-row .count button{padding:6px 12px}
+.cab-name{flex:1 1 160px;background:var(--dial-bg);color:var(--ink);border:1px solid var(--line);
+  border-radius:7px;padding:6px 8px;font-size:13px}
+.mini:disabled{opacity:.4;cursor:default}
+
 /* ---------- controls ---------- */
 .sel{display:flex;flex-direction:column;gap:4px;margin-top:12px;
   font:10px ui-monospace,monospace;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}

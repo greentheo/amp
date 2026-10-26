@@ -122,6 +122,8 @@ void AmpEditor::handle(const juce::var& m) {
     } else if (type == "pedalOn") {
         proc_.setPedalOn(m["uid"].toString(), m["on"]);
         proc_.midiTouched("pedal." + m["uid"].toString() + ".on");
+    } else if (type == "cabs") {
+        proc_.setCabs(m["cabs"]);
     } else if (type == "voicing") {
         proc_.setVoicing(m["v"]);
     } else if (type == "panic") {
