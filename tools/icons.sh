@@ -30,6 +30,17 @@ cp "$tmp/mac.png" icons/amp-1024.png
 magick "$tmp/mac.png" -resize 64x64 icons/amp-64.png
 magick "$tmp/mac.png" -resize 32x32 icons/amp-32.png
 
+# The app's icon file, every size macOS asks for at 1x and 2x. JUCE makes
+# one from ICON_BIG too, but with only a 48 and a 1024 in it, and the Dock
+# scaling the 48 up is what an icon that "doesn't load" looks like.
+set_dir="$tmp/AppIcon.iconset"
+mkdir -p "$set_dir"
+for s in 16 32 128 256 512; do
+  magick "$tmp/mac.png" -resize ${s}x${s} "$set_dir/icon_${s}x${s}.png"
+  magick "$tmp/mac.png" -resize $((s * 2))x$((s * 2)) "$set_dir/icon_${s}x${s}@2x.png"
+done
+iconutil -c icns -o icons/AppIcon.icns "$set_dir"
+
 # Full-bleed: no shadow, square corners, the rounded square's 824 scaled up
 # to fill the canvas.
 sed -e 's/ filter="url(#shadow)"//' -e 's/rx="186"/rx="0"/g' \
@@ -43,4 +54,4 @@ magick "$tmp/square-1024.png" -resize 180x180 icons/apple-touch-icon.png
 if command -v zopflipng >/dev/null; then
   for f in icons/*.png; do zopflipng -y -m "$f" "$f" >/dev/null; done
 fi
-ls -l icons/*.png | awk '{ printf "  %-28s %7d bytes\n", $9, $5 }'
+ls -l icons/*.png icons/*.icns | awk '{ printf "  %-28s %7d bytes\n", $9, $5 }'

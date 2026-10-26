@@ -237,9 +237,13 @@ as a standalone; the AU and VST3 come later from the same code. It needs
 CMake 3.22 or newer, and fetches JUCE itself on the first configure:
 
 ```
-(cd native/app && cmake -B build -G Ninja && cmake --build build)
-open native/app/build/Amp_artefacts/Release/Standalone/Amp.app
+tools/install-app.sh
 ```
+
+That builds it, installs it in `/Applications`, and opens it. From then on
+it's an ordinary app: Spotlight (Cmd-Space, "Amp"), Launchpad, or keep it in
+the Dock. Run the script again after pulling changes. It quits the running
+copy, which saves its settings, before replacing it.
 
 JUCE's standalone starts with the input muted, in case it is a microphone
 next to a speaker. Open its settings from the banner, pick the guitar's input

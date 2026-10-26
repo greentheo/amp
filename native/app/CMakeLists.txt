@@ -88,6 +88,9 @@ add_custom_target(AmpWebUI ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${AMP_WEB_SOURCE}/css" "${AMP_WEB_DEST}/css"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${AMP_WEB_SOURCE}/js" "${AMP_WEB_DEST}/js"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${AMP_WEB_SOURCE}/icons" "${AMP_WEB_DEST}/icons"
+  # The full icon set from tools/icons.sh, over JUCE's two-size one.
+  COMMAND ${CMAKE_COMMAND} -E copy "${AMP_WEB_SOURCE}/icons/AppIcon.icns"
+          "$<TARGET_BUNDLE_CONTENT_DIR:Amp_Standalone>/Resources/AppIcon.icns"
   COMMENT "Copying the web UI into the app bundle"
   VERBATIM)
 add_dependencies(AmpWebUI Amp_Standalone)
