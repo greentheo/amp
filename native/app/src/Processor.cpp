@@ -403,6 +403,9 @@ void AmpProcessor::takeHandoffs(int frames) {
         if (duck_ != Duck::Closed) duck_ = Duck::Closing;
     }
     if (duck_ == Duck::Open && nextLanes_.load() != nullptr) duck_ = Duck::Closing;
+    // A muting tuner holds it shut for as long as it is on.
+    const bool hush = tuning_.load() && tunerMute_.load();
+    if (hush && (duck_ == Duck::Open || duck_ == Duck::Opening)) duck_ = Duck::Closing;
     if (duck_ == Duck::Closed) {
         // Silent now, so the new pedals go in without a click.
         if (auto* lanes = nextLanes_.exchange(nullptr)) {
@@ -410,7 +413,7 @@ void AmpProcessor::takeHandoffs(int frames) {
             retire({nullptr, chain_->swapLanes(std::unique_ptr<ampcore::ChainLanes>(lanes)).release()});
         }
         if (heldFor_ > 0) heldFor_ -= frames;
-        else if (nextLanes_.load() == nullptr) duck_ = Duck::Opening;
+        else if (nextLanes_.load() == nullptr && !hush) duck_ = Duck::Opening;
     }
 }
 
@@ -425,6 +428,23 @@ void AmpProcessor::applyDuck(float* l, float* r, int n) {
         l[i] *= g;
         if (r) r[i] *= g;
     }
+}
+
+void AmpProcessor::setTuner(bool on, bool mute) {
+    tunerMute_.store(mute);
+    // What is in the ring from last time is not the string being tuned now.
+    if (on && !tuning_.load()) tunerFrom_.store(written_.load());
+    tuning_.store(on);
+}
+
+bool AmpProcessor::tunerWindow(float* dst, int n) const {
+    if (n <= 0 || n > RING / 2) return false;
+    const uint64_t end = written_.load(std::memory_order_acquire);
+    if (end < tunerFrom_.load() + static_cast<uint64_t>(n)) return false;
+    const uint64_t from = end - static_cast<uint64_t>(n);
+    for (int i = 0; i < n; i++) dst[i] = ring_[static_cast<size_t>((from + static_cast<uint64_t>(i)) % RING)];
+    // Lapped while copying: the oldest of these may already be newer samples.
+    return written_.load(std::memory_order_acquire) - from <= static_cast<uint64_t>(RING);
 }
 
 // ---- audio -----------------------------------------------------------------
@@ -482,6 +502,12 @@ void AmpProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
     // The guitar is the first input channel; a second one, if the device
     // has it, is ignored rather than summed in.
     const float* in = buffer.getReadPointer(0);
+    if (tuning_.load(std::memory_order_relaxed)) {
+        // Before the chain: the input and the left output can be one buffer.
+        const uint64_t w = written_.load(std::memory_order_relaxed);
+        for (int i = 0; i < n; i++) ring_[static_cast<size_t>((w + static_cast<uint64_t>(i)) % RING)] = in[i];
+        written_.store(w + static_cast<uint64_t>(n), std::memory_order_release);
+    }
     float* left = buffer.getWritePointer(0);
     float* right = nullptr;
     if (getTotalNumOutputChannels() >= 2) {
@@ -553,7 +579,7 @@ void AmpProcessor::setStateInformation(const void* data, int size) {
 // ---- MIDI ------------------------------------------------------------------
 
 /** The controls the map drives, by the page's ids: "amp.<knob>",
- *  "amp.stages", "pedal.<uid>.<knob>", "pedal.<uid>.on". */
+ *  "amp.stages", "pedal.<uid>.<knob>", "pedal.<uid>.on", "tuner.on". */
 class AmpProcessor::Surface : public ampcore::ControlSurface {
 public:
     explicit Surface(AmpProcessor& p) : p_(p) {}
@@ -573,6 +599,7 @@ public:
             }
             return c;
         }
+        if (s == "tuner.on") return {ampcore::ControlInfo::Switch, 0, 1, 0};
         juce::String uid, key;
         juce::var slot;
         if (!pedal(s, uid, key, slot)) return c;
@@ -593,6 +620,7 @@ public:
             auto* v = p_.state.getRawParameterValue(k);
             return v ? v->load() : 0;
         }
+        if (s == "tuner.on") return p_.tuning() ? 1 : 0;
         juce::String uid, key;
         juce::var slot;
         if (!pedal(s, uid, key, slot)) return 0;
@@ -608,6 +636,9 @@ public:
             else p_.setKnob(k, v);
             return;
         }
+        // A footswitch on the tuner works with the window shut: it mutes,
+        // and the page opens the tuner when it wakes to the change.
+        if (s == "tuner.on") return p_.setTuner(v >= 0.5, p_.tunerMute_.load());
         juce::String uid, key;
         juce::var slot;
         if (!pedal(s, uid, key, slot)) return;

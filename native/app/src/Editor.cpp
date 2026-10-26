@@ -102,6 +102,9 @@ void AmpEditor::handle(const juce::var& m) {
     if (verbose_ && type != "log") log("page: " + juce::JSON::toString(m, true));
 
     if (type == "hello") {
+        // A page that has just loaded has its tuner shut; so should we, or a
+        // reload in the middle of tuning would leave the amp muted.
+        proc_.setTuner(false, true);
         web_.emitEventIfBrowserIsVisible("state", event({{"settings", proc_.settings()}, {"audio", audioInfo()}}));
     } else if (type == "set") {
         proc_.setKnob(m["name"].toString(), m["value"]);
@@ -126,6 +129,8 @@ void AmpEditor::handle(const juce::var& m) {
         proc_.setCabs(m["cabs"]);
     } else if (type == "voicing") {
         proc_.setVoicing(m["v"]);
+    } else if (type == "tuner") {
+        proc_.setTuner(m["on"], m["mute"]);
     } else if (type == "panic") {
         proc_.panic();
     } else if (type == "audioSettings") {
@@ -187,9 +192,23 @@ juce::var AmpEditor::audioInfo() const {
 
 void AmpEditor::timerCallback() {
     web_.emitEventIfBrowserIsVisible("meter", event({{"peak", static_cast<double>(proc_.takePeak())}}));
+    if (proc_.tuning()) tune();
     // The device line too, now and then, in case a change landed while the
     // page was asleep.
     if (++ticks_ % 30 == 0) web_.emitEventIfBrowserIsVisible("audio", audioInfo());
+}
+
+void AmpEditor::tune() {
+    const double rate = proc_.sampleRate();
+    if (rate <= 0) return;
+    if (!pitch_ || !juce::exactlyEqual(rate_, rate)) {
+        pitch_ = std::make_unique<ampcore::PitchDetector>(rate);
+        look_.assign(static_cast<size_t>(pitch_->window()), 0.0f);
+        rate_ = rate;
+    }
+    if (!proc_.tunerWindow(look_.data(), static_cast<int>(look_.size()))) return;
+    const auto p = pitch_->analyse(look_.data(), static_cast<int>(look_.size()));
+    web_.emitEventIfBrowserIsVisible("tuner", event({{"hz", p.hz}, {"clarity", p.clarity}, {"rms", p.rms}}));
 }
 
 void AmpEditor::changeListenerCallback(juce::ChangeBroadcaster*) {

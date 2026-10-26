@@ -18,6 +18,7 @@
 #include <optional>
 
 #include "Processor.h"
+#include "ampcore/tuner.hpp"
 
 class AmpEditor : public juce::AudioProcessorEditor, private juce::Timer, private juce::ChangeListener {
 public:
@@ -32,6 +33,8 @@ private:
 
     void handle(const juce::var& message);
     juce::var audioInfo() const;
+    /** One look at the input for the tuner, sent to the page. */
+    void tune();
     std::optional<juce::WebBrowserComponent::Resource> serve(const juce::String& path) const;
     void log(const juce::String& line) const;
     /** A line for the MIDI panel's status. */
@@ -43,6 +46,9 @@ private:
     int ticks_ = 0;
     juce::WebBrowserComponent web_;
     std::unique_ptr<juce::FileChooser> chooser_;
+    std::unique_ptr<ampcore::PitchDetector> pitch_;  // made for the device's rate
+    std::vector<float> look_;
+    double rate_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AmpEditor)
 };

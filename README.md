@@ -1,8 +1,8 @@
 # Amp
 
 A guitar amplifier: a cascaded valve preamp, a tone stack taken off the
-schematic, a push-pull power amp with sag, a speaker cabinet, and a board of
-pedals you can drive from MIDI.
+schematic, a push-pull power amp with sag, a speaker cabinet, a board of
+pedals you can drive from MIDI, and a tuner.
 
 **The native app is the instrument.** It runs the amp in C++ at 16-frame
 buffers on macOS, with iOS, then Windows and Android, to follow. The browser
@@ -290,6 +290,27 @@ either side of it knows what it is. The analytic worklet is one
 implementation; a neural engine (NAM-compatible, running a captured model in a
 worklet) drops into the same socket without the cab, the tone controls, the
 recorder or the UI changing.
+
+## The tuner
+
+**Tuner** in the bar opens it: the note, a needle over ±50 cents, and the
+six strings of standard tuning with the one you are playing lit. The amp is
+muted while it is open, as with a tuner pedal (switch that off beside it),
+and the reference A can be set from 430 to 450 Hz. It is a control like the
+knobs, so a footswitch can be mapped to it.
+
+It listens to the dry input, before the pedals, with YIN (de Cheveigné and
+Kawahara, 2002): find the lag at which the signal best repeats, normalised so
+that the first good match beats its multiples and the octave never jumps,
+then a parabola through the peak of the energy-normalised correlation for the
+fraction of a sample. A gentle low-pass in front takes out hiss and keeps a
+stiff string's sharp upper partials from pulling the reading.
+`node tools/tuner-parity.mjs` checks it on synthetic notes from a 5-string
+bass's low B to the 24th fret, at 44.1, 48 and 96 kHz: guitar notes read
+within 0.05 cents for a pure tone and 0.1 for a plucked string, with no
+octave errors. It also checks that the browser's detector (`js/audio/tuner.js`)
+and the app's (`ampcore/src/tuner.cpp`) agree to the last bit, including on the
+DI recording.
 
 ## No guitar?
 

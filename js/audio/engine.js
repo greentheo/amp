@@ -17,6 +17,7 @@ import { renderCab } from './cab.js';
 import { makeDI } from './di.js';
 import { coeffs } from './tonestack.js';
 import { PEDAL_TYPES, defaultBoard, findPedal } from './pedals.js';
+import { PitchDetector } from './tuner.js';
 
 export class Engine {
   constructor() {
@@ -246,11 +247,15 @@ export class Engine {
     Object.assign(this, this.buildChain(ctx));
     this.pedalNodes = this.buildPedals(ctx, this, this.board);
     this.amp.port.onmessage = (e) => { if (this.onMeter) this.onMeter(e.data); };
-    this.limiter.connect(ctx.destination);
+    // The last stage is the tuner's mute, so nothing upstream that moves the
+    // master — a board swap, the lag test, a restart — can undo it.
+    this.out = ctx.createGain();
+    this.out.gain.value = this.tunerMuted ? 0 : 1;
+    this.limiter.connect(this.out).connect(ctx.destination);
 
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
-    this.limiter.connect(this.analyser);
+    this.out.connect(this.analyser);
 
     // Nothing is plugged in yet, so give it something to amplify.
     this.di = ctx.createBufferSource();
@@ -739,6 +744,39 @@ export class Engine {
     let peak = 0;
     for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
     return peak;
+  }
+
+  /**
+   * The tuner. While it is on, `onTuner` gets a reading 30 times a second,
+   * { hz, clarity, rms }, taken from the input before any pedal; with `mute`
+   * the output is silent meanwhile, as a tuner pedal's is. False if there is
+   * no audio to listen to yet.
+   */
+  setTuner(on, mute) {
+    clearInterval(this.tunerTimer);
+    this.tunerTimer = null;
+    this.tunerMuted = !!(on && mute);
+    if (!this.ctx) return false;
+    this.out.gain.setTargetAtTime(this.tunerMuted ? 0 : 1, this.ctx.currentTime, 0.008);
+    if (!on) return true;
+    const look = () => {
+      // A restart builds a new context; follow it.
+      if (!this.tunerTap || this.tunerTap.context !== this.ctx) {
+        const det = new PitchDetector(this.ctx.sampleRate);
+        const tap = this.ctx.createAnalyser();
+        let size = 32;
+        while (size < det.window()) size *= 2;
+        tap.fftSize = size;
+        this.fxPreIn.connect(tap);
+        this.tunerTap = tap;
+        this.tunerDet = det;
+        this.tunerBuf = new Float32Array(size);
+      }
+      this.tunerTap.getFloatTimeDomainData(this.tunerBuf);
+      if (this.onTuner) this.onTuner(this.tunerDet.analyse(this.tunerBuf));
+    };
+    this.tunerTimer = setInterval(look, 33);
+    return true;
   }
 
   /** Mute for a moment, then come back to `master`. */

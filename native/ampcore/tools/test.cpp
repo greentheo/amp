@@ -9,6 +9,7 @@
 //   ampcore-test conv spring in.wav outL.wav outR.wav
 //   ampcore-test pedal <type> in.wav out.wav [knob=value ...] [--toggle s1,s2,...]
 //   ampcore-test midimap scenario.json      (see tools/midimap-parity.mjs)
+//   ampcore-test tuner <rate> in.f32 <hop>  (see tools/tuner-parity.mjs)
 //
 // Everything renders at 48 kHz, the stimulus's rate. The conv commands add
 // the same 2 s tail renderStimulus() does, and take --partition N (the
@@ -35,6 +36,7 @@
 #include "ampcore/midimap.hpp"
 #include "ampcore/pedals.hpp"
 #include "ampcore/reverb.hpp"
+#include "ampcore/tuner.hpp"
 #include "ampcore/wav.hpp"
 
 using namespace ampcore;
@@ -229,6 +231,20 @@ int main(int argc, char** argv) {
             }
         }
         std::printf("{\"changes\":[%s],\"bindings\":%s}\n", changes.c_str(), MidiMap::toJson(map.bindings()).c_str());
+        return 0;
+    }
+    if (argc >= 5 && !std::strcmp(argv[1], "tuner")) {
+        // Raw float32 in; one line per look, every <hop> samples, as the
+        // parity tool prints them.
+        const std::string raw = readFile(argv[3]);
+        std::vector<float> x(raw.size() / sizeof(float));
+        std::memcpy(x.data(), raw.data(), x.size() * sizeof(float));
+        PitchDetector det(std::atof(argv[2]));
+        const int hop = std::atoi(argv[4]);
+        for (int end = det.window(); end <= static_cast<int>(x.size()); end += hop) {
+            const Pitch p = det.analyse(x.data(), end);
+            std::printf("%.17g %.17g %.17g\n", p.hz, p.clarity, p.rms);
+        }
         return 0;
     }
     std::fprintf(stderr, "usage: see the top of tools/test.cpp\n");

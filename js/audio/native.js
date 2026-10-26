@@ -40,6 +40,7 @@ export class NativeEngine {
     this.backend = backend;
     // The peak of the last ~33 ms, as the browser's analyser window gives it.
     backend.addEventListener('meter', (e) => { this.peak = e.peak; });
+    backend.addEventListener('tuner', (p) => { if (this.onTuner) this.onTuner(p); });
     backend.addEventListener('audio', (a) => {
       this.audio = a || {};
       if (this.ctx && this.audio.rate) this.ctx.sampleRate = this.audio.rate;
@@ -171,6 +172,12 @@ export class NativeEngine {
   inputRate() { return null; }
 
   panic() { this.send({ type: 'panic' }); }
+
+  /** The app listens and mutes; readings come back as "tuner" events. */
+  setTuner(on, mute) {
+    this.send({ type: 'tuner', on: !!on, mute: !!mute });
+    return true;
+  }
 
   showAudioSettings() { this.send({ type: 'audioSettings' }); }
 }

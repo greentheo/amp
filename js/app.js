@@ -13,6 +13,7 @@ import { initBoard, loadBoard } from './ui/board.js';
 import { setVoice } from './ui/amplook.js';
 import { mountCabPictures } from './ui/cabpic.js';
 import { initCabView } from './ui/cabview.js';
+import { initTuner } from './ui/tuner.js';
 import { Midi, sourceText } from './midi.js';
 import { NativeMidi } from './native-midi.js';
 
@@ -1027,6 +1028,7 @@ async function begin() {
     if (!engine.sinkId && savedOutput()?.deviceId) outNote('saved output not available — using the system default');
   }
   updateLatency();
+  tuner.refresh();
   requestAnimationFrame(frame);
 }
 
@@ -1072,6 +1074,7 @@ if (!engine.native) {
   wireCalibration();
 }
 wireMidi();
+const tuner = initTuner({ engine, host: $('tuner'), button: $('btn-tuner') });
 $('btn-panic').addEventListener('click', () => engine.panic(values.master));
 if (engine.native) {
   applyNative(nativeState);

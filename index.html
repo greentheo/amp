@@ -73,11 +73,15 @@
   </div>
   <button id="btn-rec" class="mini rec web-only"><span class="dot"></span><span id="rec-label">Record</span></button>
   <span id="rec-time" class="stat web-only">0:00</span>
+  <button id="btn-tuner" class="mini" title="Tuner">Tuner</button>
   <button id="btn-panic" class="mini">Mute</button>
   <button id="btn-midi-jump" class="mini mbtn" title="MIDI"><span id="midi-dot" class="mdot"></span>MIDI</button>
 </header>
 
 <main class="app" id="app" data-voice="jcm800">
+
+  <!-- The tuner, built by js/ui/tuner.js; shown from the bar. -->
+  <section class="row tuner" id="tuner" hidden></section>
 
   <!-- The amp takes the look of the tone stack it is running: colours and
        an original nameplate, no one's logo. See js/ui/amplook.js. -->

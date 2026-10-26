@@ -13,7 +13,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-add_library(ampcore STATIC src/tonestack.cpp src/amp.cpp src/cab.cpp src/convolver.cpp src/reverb.cpp src/pedals.cpp src/chain.cpp src/midimap.cpp)
+add_library(ampcore STATIC src/tonestack.cpp src/amp.cpp src/cab.cpp src/convolver.cpp src/reverb.cpp src/pedals.cpp src/chain.cpp src/midimap.cpp src/tuner.cpp)
 target_include_directories(ampcore PUBLIC include)
 # No -ffast-math. It licenses the compiler to reassociate floating point,
 # and the null test against the browser build depends on the arithmetic

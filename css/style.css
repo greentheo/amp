@@ -5,7 +5,7 @@
   --bg:#120f0d; --panel:#1b1613; --plate:#241d18; --line:#372c24;
   --ink:#f0e3d4; --dim:#a08d79; --faint:#6b5b4c;
   --accent:#e0a152; --accent-2:#d1623a; --hot:#e2563f; --lamp:#ff6b4a;
-  --dial-bg:#100c09;
+  --dial-bg:#100c09; --good:#9fd36b;
   --radius:10px;
 }
 *{box-sizing:border-box}
@@ -333,3 +333,46 @@ body.mapping [data-ctl].armed{outline:2px solid var(--accent);animation:arm 1s e
 .lagres .lagbig{font:600 34px ui-monospace,monospace;color:var(--accent);margin-bottom:2px}
 .lagres .lagverdict{margin-top:8px;color:var(--ink)}
 .lagres .bad,.lagres.bad{color:var(--hot)}
+
+/* ---------- tuner ---------- */
+/* A tuner pedal's face: the note, a needle that settles in the middle, a
+   light either side for which way to turn the peg. Green only when it is
+   right, so a glance is enough. */
+.tun{display:grid;grid-template-columns:minmax(110px,auto) 1fr minmax(180px,auto);gap:22px;align-items:center}
+.tun-note{font:600 72px/1 ui-sans-serif,system-ui,sans-serif;text-align:center;color:var(--dim);
+  font-variant-numeric:tabular-nums;transition:color .12s}
+.tun-oct{font-size:22px;color:var(--faint);margin-left:3px}
+.tun-lights{display:flex;align-items:center;justify-content:space-between;font-size:15px;
+  color:var(--line);margin-bottom:6px}
+.tun-mid{width:10px;height:10px;border-radius:50%;background:var(--line);transition:background .12s,box-shadow .12s}
+.tun-flat,.tun-sharp{transition:color .12s,text-shadow .12s}
+.tun-scale{position:relative;height:38px;border-radius:7px;background:var(--dial-bg);overflow:hidden;
+  background-image:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),#2c231c calc(10% - 1px) 10%)}
+.tun-zone{position:absolute;top:0;bottom:0;left:48%;width:4%;background:rgba(159,211,107,.13);
+  border-left:1px solid #3a4a2b;border-right:1px solid #3a4a2b}
+.tun-needle{position:absolute;top:4px;bottom:4px;left:50%;width:4px;margin-left:-2px;border-radius:2px;
+  background:var(--dim);transition:left .09s linear,background .12s,box-shadow .12s}
+.tun-ticks{display:flex;justify-content:space-between;margin-top:5px;
+  font:10px ui-monospace,monospace;color:var(--faint)}
+.tun-strings{display:flex;gap:6px;justify-content:center;margin-top:12px}
+.tun-strings span{min-width:28px;padding:3px 0;text-align:center;border:1px solid var(--line);border-radius:999px;
+  font:11px ui-monospace,monospace;color:var(--faint)}
+.tun-strings span.on{border-color:var(--accent);color:var(--accent)}
+.tun-side{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.tun-read{display:flex;align-items:baseline;gap:10px;min-height:22px}
+.tun-cents{font:600 20px ui-monospace,monospace;color:var(--ink)}
+.tun-hz{font:12px ui-monospace,monospace;color:var(--faint)}
+.tun-hint{margin:0;font-size:12px;color:var(--dim);min-height:1.2em}
+.tun-ref{flex-direction:row;align-items:center;gap:8px;margin-top:2px;
+  font:10px ui-monospace,monospace;letter-spacing:.14em;color:var(--faint)}
+.tunerplate[data-state=flat] .tun-flat,.tunerplate[data-state=sharp] .tun-sharp{color:var(--accent);text-shadow:0 0 8px var(--accent)}
+.tunerplate[data-state=flat] .tun-needle,.tunerplate[data-state=sharp] .tun-needle{background:var(--accent)}
+.tunerplate[data-state=flat] .tun-note,.tunerplate[data-state=sharp] .tun-note{color:var(--ink)}
+.tunerplate[data-state=in] .tun-note{color:var(--good)}
+.tunerplate[data-state=in] .tun-needle{background:var(--good);box-shadow:0 0 10px var(--good)}
+.tunerplate[data-state=in] .tun-mid{background:var(--good);box-shadow:0 0 9px var(--good)}
+@media (max-width:620px){
+  .tun{grid-template-columns:auto 1fr;gap:14px}
+  .tun-note{font-size:54px}
+  .tun-side{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap;align-items:center}
+}

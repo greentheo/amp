@@ -78,6 +78,19 @@ public:
     /** The user's custom cabs: a list the page keeps, saved with the app. */
     void setCabs(const juce::var& cabs);
     void panic() { panic_.store(true); }
+
+    // ---- the tuner ------------------------------------------------------
+    //
+    // While it is on, the audio thread copies the dry input into a ring, and
+    // the editor reads the latest stretch of it 30 times a second and finds
+    // the note there, off the audio thread. With `mute`, the output holds
+    // shut the way a tuner pedal's does, so tuning is silent.
+
+    void setTuner(bool on, bool mute);
+    bool tuning() const { return tuning_.load(); }
+    double sampleRate() const { return rate_.load(); }
+    /** The latest n input samples into dst; false if there are not n yet. */
+    bool tunerWindow(float* dst, int n) const;
     /** The output's peak since the last call. */
     float takePeak() { return peak_.exchange(0.0f); }
 
@@ -166,6 +179,14 @@ private:
     int heldFor_ = 0;
     std::atomic<bool> panic_{false};
     std::atomic<float> peak_{0};
+
+    // The tuner's ring: written by the audio thread only, read by whoever
+    // asks, who checks afterwards that the writer did not lap them.
+    static constexpr int RING = 1 << 15;
+    std::array<float, RING> ring_{};
+    std::atomic<uint64_t> written_{0};
+    std::atomic<uint64_t> tunerFrom_{0};  // where this turn of the tuner began
+    std::atomic<bool> tuning_{false}, tunerMute_{true};
 
     // MIDI. Lock order: midiLock_ before settingsLock_, never the reverse.
     std::unique_ptr<Surface> surface_;
